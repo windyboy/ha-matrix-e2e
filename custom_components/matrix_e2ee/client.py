@@ -11,6 +11,7 @@ from typing import Any
 from .const import (
     DEVICE_NAME,
     ERROR_DEVICE_MISMATCH,
+    ERROR_ENCRYPTION_UNAVAILABLE,
     ERROR_LOGIN_FAILED,
     ERROR_PASSWORD_REQUIRED,
     ERROR_RESTORE_FAILED,
@@ -20,6 +21,7 @@ from .const import (
     ERROR_UNVERIFIED_DEVICE,
     EVENT_COMMAND,
     EVENT_ERROR,
+    NIO_DEFAULT_PICKLE_KEY,
 )
 from .storage import (
     MatrixSession,
@@ -33,6 +35,59 @@ _LOGGER = logging.getLogger(__name__)
 
 NioClientFactory = Callable[..., Any]
 
+_ENCRYPTED_EVENT_TYPES = frozenset(
+    {"m.room.encrypted", "MegolmEvent", "OlmEvent", "EncryptedEvent"}
+)
+
+
+class SecretRedactFilter(logging.Filter):
+    """Drop known session secrets from log records. Never log the secret list."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._secrets: tuple[str, ...] = ()
+
+    def set_secrets(self, *values: str | None) -> None:
+        # Skip short strings to avoid redacting ordinary words (e.g. "pw").
+        self._secrets = tuple(
+            value for value in values if isinstance(value, str) and len(value) >= 8
+        )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self._secrets:
+            return True
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 — never break logging
+            return True
+        redacted = message
+        for secret in self._secrets:
+            if secret and secret in redacted:
+                redacted = redacted.replace(secret, "[redacted]")
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return True
+
+
+_REDACT_FILTER = SecretRedactFilter()
+
+
+_REDACT_LOGGER_NAMES = (
+    "custom_components.matrix_e2ee",
+    "custom_components.matrix_e2ee.client",
+    "custom_components.matrix_e2ee.storage",
+)
+
+
+def _ensure_redact_filter() -> SecretRedactFilter:
+    # Logger filters are not inherited by child loggers; attach to each module.
+    for name in _REDACT_LOGGER_NAMES:
+        logger = logging.getLogger(name)
+        if _REDACT_FILTER not in logger.filters:
+            logger.addFilter(_REDACT_FILTER)
+    return _REDACT_FILTER
+
 
 class MatrixE2EEError(Exception):
     """Fail-closed integration error with a public error code."""
@@ -44,6 +99,12 @@ class MatrixE2EEError(Exception):
 
 def _is_error_response(response: Any) -> bool:
     return type(response).__name__.endswith("Error")
+
+
+async def _maybe_await(value: Any) -> Any:
+    if hasattr(value, "__await__"):
+        return await value
+    return value
 
 
 def room_allowed(room_id: str, allowed_rooms: list[str]) -> bool:
@@ -65,6 +126,39 @@ def parse_command(body: str, prefix: str) -> tuple[str, list[str]] | None:
         return None
     parts = rest.split()
     return parts[0], parts[1:]
+
+
+def _nio_room(nio: Any, room_id: str) -> Any | None:
+    rooms = getattr(nio, "rooms", None)
+    if not isinstance(rooms, dict):
+        return None
+    return rooms.get(room_id)
+
+
+def _olm_ready(nio: Any) -> bool:
+    return getattr(nio, "olm", None) is not None
+
+
+def _sync_since(nio: Any) -> str | None:
+    for attr in ("next_batch", "loaded_sync_token"):
+        value = getattr(nio, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _requires_verified_sender(room: Any, event: Any) -> bool:
+    """Encrypted rooms and decrypted/ciphertext events require verified=True."""
+    if getattr(room, "encrypted", False):
+        return True
+    if getattr(event, "decrypted", False):
+        return True
+    event_type = getattr(event, "type", None)
+    if event_type in _ENCRYPTED_EVENT_TYPES:
+        return True
+    if type(event).__name__ in _ENCRYPTED_EVENT_TYPES:
+        return True
+    return False
 
 
 class MatrixE2EEClient:
@@ -113,6 +207,8 @@ class MatrixE2EEClient:
                 device_id=device_id or "",
                 store_path=store,
                 pickle_key=pickle_key,
+                encryption_enabled=True,
+                store_sync_tokens=True,
             )
         from nio import AsyncClient, AsyncClientConfig
 
@@ -128,6 +224,13 @@ class MatrixE2EEClient:
             store_path=store,
             config=config,
         )
+
+    def _install_secret_filter(self) -> None:
+        session = self.session
+        values: list[str | None] = [self._password]
+        if session is not None:
+            values.extend([session.access_token, session.pickle_key])
+        _ensure_redact_filter().set_secrets(*values)
 
     async def async_start(self) -> None:
         """Create or restore an E2EE-capable Matrix device, then connect."""
@@ -148,6 +251,11 @@ class MatrixE2EEClient:
                 "password is required when no session exists",
             )
         pickle_key = secrets.token_urlsafe(32)
+        if pickle_key == NIO_DEFAULT_PICKLE_KEY:
+            raise MatrixE2EEError(
+                ERROR_LOGIN_FAILED,
+                "refusing to use the SDK default pickle key",
+            )
         nio = self._make_nio(pickle_key=pickle_key, device_id=None)
         self.nio = nio
         response = await nio.login(self._password, device_name=DEVICE_NAME)
@@ -167,10 +275,16 @@ class MatrixE2EEClient:
         atomic_save_session(self._config_dir, session)
         self.session = session
         self._first_setup = True
+        self._install_secret_filter()
         await self._upload_keys_if_needed()
         _LOGGER.info("matrix_e2ee first login succeeded; session stored")
 
     async def _restore(self, session: MatrixSession) -> None:
+        if session.pickle_key == NIO_DEFAULT_PICKLE_KEY:
+            raise MatrixE2EEError(
+                ERROR_RESTORE_FAILED,
+                "refusing to restore a session that used the SDK default pickle key",
+            )
         nio = self._make_nio(
             pickle_key=session.pickle_key,
             device_id=session.device_id,
@@ -189,6 +303,7 @@ class MatrixE2EEClient:
             )
         self.session = session
         self._first_setup = False
+        self._install_secret_filter()
         await self._upload_keys_if_needed()
         _LOGGER.info("matrix_e2ee restored existing Matrix device")
 
@@ -199,9 +314,7 @@ class MatrixE2EEClient:
         should_upload = getattr(nio, "should_upload_keys", False)
         upload = getattr(nio, "keys_upload", None)
         if should_upload and upload is not None:
-            result = upload()
-            if hasattr(result, "__await__"):
-                await result
+            await _maybe_await(upload())
 
     async def async_stop(self) -> None:
         """Cancel sync and close the nio client."""
@@ -223,9 +336,7 @@ class MatrixE2EEClient:
         close = getattr(nio, "close", None)
         if close is None:
             return
-        result = close()
-        if hasattr(result, "__await__"):
-            await result
+        await _maybe_await(close())
 
     def _require_nio(self) -> Any:
         if self.nio is None:
@@ -243,7 +354,15 @@ class MatrixE2EEClient:
             self._emit_error(ERROR_ROOM_NOT_ALLOWED, room_id=room_id)
             raise MatrixE2EEError(ERROR_ROOM_NOT_ALLOWED, "room is not allowlisted")
         nio = self._require_nio()
+        room = _nio_room(nio, room_id)
+        if room is not None and getattr(room, "encrypted", False) and not _olm_ready(nio):
+            self._emit_error(ERROR_ENCRYPTION_UNAVAILABLE, room_id=room_id)
+            raise MatrixE2EEError(
+                ERROR_ENCRYPTION_UNAVAILABLE,
+                "encrypted room requires olm; refusing plaintext fallback",
+            )
         try:
+            # Single attempt. Never retry while ignoring unverified devices.
             response = await nio.room_send(
                 room_id,
                 "m.room.message",
@@ -269,17 +388,19 @@ class MatrixE2EEClient:
             return
         if self.session and sender == self.session.user_id:
             return
-        body = getattr(event, "body", None)
-        if not isinstance(body, str):
-            return
-        decrypted = bool(getattr(event, "decrypted", False))
+        requires_verified = _requires_verified_sender(room, event)
         verified = bool(getattr(event, "verified", False))
-        if decrypted and not verified:
-            self._emit_error(
-                ERROR_UNVERIFIED_DEVICE,
-                room_id=room_id,
-                sender=sender,
-            )
+        decrypted = bool(getattr(event, "decrypted", False))
+        body = getattr(event, "body", None)
+        if requires_verified and not verified:
+            if decrypted or isinstance(body, str):
+                self._emit_error(
+                    ERROR_UNVERIFIED_DEVICE,
+                    room_id=room_id,
+                    sender=sender,
+                )
+            return
+        if not isinstance(body, str):
             return
         if not room_allowed(room_id, self.allowed_rooms):
             return
@@ -311,21 +432,19 @@ class MatrixE2EEClient:
     async def async_sync_loop(self) -> None:
         """Initial sync without command replay; then incremental sync with callbacks."""
         nio = self._require_nio()
+        since = _sync_since(nio)
+        catch_up = self._first_setup or not since
         sync = getattr(nio, "sync", None)
-        if self._first_setup:
-            if sync is not None:
-                result = sync(timeout=30_000, full_state=True)
-                if hasattr(result, "__await__"):
-                    await result
-            self.enable_command_callbacks()
-        else:
-            self.enable_command_callbacks()
+        if catch_up and sync is not None:
+            await _maybe_await(sync(timeout=30_000, full_state=True))
+        self.enable_command_callbacks()
         sync_forever = getattr(nio, "sync_forever", None)
         if sync_forever is None:
             return
-        result = sync_forever(timeout=30_000)
-        if hasattr(result, "__await__"):
-            await result
+        kwargs: dict[str, Any] = {"timeout": 30_000}
+        if since and not catch_up:
+            kwargs["since"] = since
+        await _maybe_await(sync_forever(**kwargs))
 
 
 def _room_message_type() -> Any:
@@ -342,4 +461,6 @@ def _send_error_code(err: Any) -> str:
     text = str(err).lower()
     if "unverified" in name or "unverified" in text:
         return ERROR_UNVERIFIED_DEVICE
+    if "encryption" in name or "olm" in name or "olm" in text:
+        return ERROR_ENCRYPTION_UNAVAILABLE
     return ERROR_SEND_FAILED

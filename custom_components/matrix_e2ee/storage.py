@@ -103,8 +103,14 @@ def load_session(config_dir: str | Path) -> MatrixSession | None:
         raise SessionError(ERROR_SESSION_CORRUPT, "session file is incomplete")
     store = store_path(config_dir)
     if not store.is_dir():
-        _LOGGER.error("matrix_e2ee crypto store directory is missing")
-        raise SessionError(ERROR_STORE_MISSING, "crypto store directory is missing")
+        _LOGGER.error(
+            "matrix_e2ee crypto store directory is missing; treat as a new device"
+        )
+        raise SessionError(
+            ERROR_STORE_MISSING,
+            "crypto store directory is missing; treat this as a new device "
+            "(old history cannot be decrypted)",
+        )
     return MatrixSession(
         version=SESSION_VERSION,
         user_id=str(data["user_id"]),
