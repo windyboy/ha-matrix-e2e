@@ -11,10 +11,11 @@ This repository is a Home Assistant custom integration (`custom_components/matri
 From the repository root:
 
 ```bash
+python3 -m pip install -r requirements-dev.txt
 python3 -m pytest
 ```
 
-If a required Home Assistant test API is missing, stop and ask. Do not invent a workaround or install packages into Home Assistant OS.
+These tests mock `nio.AsyncClient` and do not install Home Assistant or `pytest-homeassistant-custom-component`. If a required Home Assistant test API is missing for a later check, stop and ask. Do not invent a workaround or install packages into Home Assistant OS.
 
 ## Local layout
 
