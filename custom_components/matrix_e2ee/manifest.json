@@ -1,0 +1,11 @@
+{
+  "domain": "matrix_e2ee",
+  "name": "Matrix E2EE",
+  "codeowners": ["@windyboy"],
+  "config_flow": false,
+  "documentation": "https://github.com/windyboy/ha-matrix-e2e",
+  "iot_class": "cloud_push",
+  "loggers": ["custom_components.matrix_e2ee", "nio"],
+  "requirements": ["matrix-nio[e2e]==0.26.0"],
+  "version": "0.1.0"
+}
