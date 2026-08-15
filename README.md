@@ -64,7 +64,7 @@ Commands fire Home Assistant events only. This integration never calls `domain.s
 
 | Milestone | Intent | Status |
 |---|---|---|
-| **M1** | Independent YAML integration, unencrypted-room send/commands, allowlist, startup/shutdown, mock tests | This delivery |
+| **M1** | Independent YAML integration, unencrypted-room send/commands, allowlist, startup/shutdown, mock tests | Previous delivery (PR #2; not merged) |
 | **M2** | E2EE lifecycle: first login writes a full crypto device, restart restores the same device, encrypted text path, fail-closed unverified send/commands | This delivery |
 | **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Backlog |
 | **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Backlog |
