@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,9 @@ from typing import Any
 from .const import (
     DEVICE_NAME,
     ERROR_DEVICE_MISMATCH,
+    ERROR_DEVICE_MISSING,
     ERROR_ENCRYPTION_UNAVAILABLE,
+    ERROR_INVALID_TRANSACTION,
     ERROR_LOGIN_FAILED,
     ERROR_PASSWORD_REQUIRED,
     ERROR_RESTORE_FAILED,
@@ -19,9 +22,12 @@ from .const import (
     ERROR_SEND_FAILED,
     ERROR_SESSION_MISSING,
     ERROR_UNVERIFIED_DEVICE,
+    ERROR_VERIFICATION_TIMEOUT,
     EVENT_COMMAND,
     EVENT_ERROR,
+    EVENT_VERIFICATION,
     NIO_DEFAULT_PICKLE_KEY,
+    VERIFICATION_TIMEOUT_SECONDS,
 )
 from .storage import (
     MatrixSession,
@@ -191,6 +197,10 @@ class MatrixE2EEClient:
         self._first_setup = False
         self._commands_enabled = False
         self._sync_task: Any | None = None
+        self._verification_enabled = False
+        self._sas_started_at: dict[str, float] = {}
+        self._verification_timeout = VERIFICATION_TIMEOUT_SECONDS
+        self._monotonic = time.monotonic
 
     def _make_nio(
         self,
@@ -243,6 +253,7 @@ class MatrixE2EEClient:
             await self._first_login()
         else:
             await self._restore(existing)
+        self.enable_verification_callbacks()
 
     async def _first_login(self) -> None:
         if not self._password:
@@ -446,6 +457,359 @@ class MatrixE2EEClient:
             kwargs["since"] = since
         await _maybe_await(sync_forever(**kwargs))
 
+    def enable_verification_callbacks(self) -> None:
+        """Register to-device SAS handlers. Accepting the protocol is not auto-trust."""
+        if self._verification_enabled:
+            return
+        nio = self._require_nio()
+        add = getattr(nio, "add_to_device_callback", None)
+        if add is not None:
+            add(self.handle_to_device_event, _key_verification_event_type())
+        self._verification_enabled = True
+
+    def _emit_verification(self, stage: str, **extra: Any) -> None:
+        payload = {"stage": stage}
+        payload.update({key: value for key, value in extra.items() if value is not None})
+        self._fire_event(EVENT_VERIFICATION, payload)
+
+    def _lookup_device(self, nio: Any, user_id: str, device_id: str) -> Any | None:
+        store = getattr(nio, "device_store", None)
+        if store is None:
+            return None
+        try:
+            user_devices = store[user_id]
+        except (KeyError, TypeError, AttributeError):
+            return None
+        try:
+            return user_devices[device_id]
+        except (KeyError, TypeError, AttributeError):
+            return None
+
+    def _get_sas(self, nio: Any, transaction_id: str) -> Any | None:
+        verifications = getattr(nio, "key_verifications", None)
+        if not isinstance(verifications, dict):
+            return None
+        return verifications.get(transaction_id)
+
+    def _sas_party(self, sas: Any, event: Any | None = None) -> tuple[str | None, str | None]:
+        device = getattr(sas, "other_olm_device", None) if sas is not None else None
+        user_id = getattr(device, "user_id", None) or (
+            getattr(event, "sender", None) if event is not None else None
+        )
+        device_id = (
+            getattr(device, "device_id", None)
+            or getattr(device, "id", None)
+            or (getattr(event, "from_device", None) if event is not None else None)
+        )
+        return user_id, device_id
+
+    def _sas_emojis(self, sas: Any) -> list[list[str]] | None:
+        get_emoji = getattr(sas, "get_emoji", None)
+        if get_emoji is None:
+            return None
+        try:
+            raw = get_emoji()
+        except Exception:  # noqa: BLE001 — emoji is optional until keys are shared
+            return None
+        if not raw:
+            return None
+        emojis: list[list[str]] = []
+        for item in raw:
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                emojis.append([str(item[0]), str(item[1])])
+        return emojis or None
+
+    def _mark_sas_started(self, transaction_id: str) -> None:
+        self._sas_started_at.setdefault(transaction_id, self._monotonic())
+
+    def _sas_is_timed_out(self, nio: Any, transaction_id: str) -> bool:
+        sas = self._get_sas(nio, transaction_id)
+        if sas is not None and bool(getattr(sas, "timed_out", False)):
+            return True
+        started = self._sas_started_at.get(transaction_id)
+        if started is None:
+            return False
+        return (self._monotonic() - started) >= self._verification_timeout
+
+    async def _send_to_device(self, nio: Any, message: Any) -> Any:
+        to_device = getattr(nio, "to_device", None)
+        if to_device is None or message is None:
+            return None
+        return await _maybe_await(to_device(message))
+
+    async def async_start_verification(self, user_id: str, device_id: str) -> str:
+        """Start SAS with a known device. Does not mark the device trusted."""
+        nio = self._require_nio()
+        device = self._lookup_device(nio, user_id, device_id)
+        if device is None:
+            self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
+            raise MatrixE2EEError(ERROR_DEVICE_MISSING, "device is not in the crypto store")
+        start = getattr(nio, "start_key_verification", None)
+        if start is None:
+            self._emit_error(ERROR_ENCRYPTION_UNAVAILABLE, user_id=user_id, device_id=device_id)
+            raise MatrixE2EEError(
+                ERROR_ENCRYPTION_UNAVAILABLE, "key verification is unavailable"
+            )
+        try:
+            response = await _maybe_await(start(device))
+        except Exception as err:  # noqa: BLE001 — never log device keys
+            code = _verification_error_code(err)
+            self._emit_error(code, user_id=user_id, device_id=device_id)
+            raise MatrixE2EEError(code, "start verification failed") from err
+        if _is_error_response(response):
+            code = _verification_error_code(response)
+            self._emit_error(code, user_id=user_id, device_id=device_id)
+            raise MatrixE2EEError(code, "start verification failed")
+        transaction_id = _transaction_id_from_verifications(
+            getattr(nio, "key_verifications", {}), user_id, device_id
+        )
+        if not transaction_id:
+            self._emit_error(ERROR_INVALID_TRANSACTION, user_id=user_id, device_id=device_id)
+            raise MatrixE2EEError(ERROR_INVALID_TRANSACTION, "verification transaction missing")
+        self._mark_sas_started(transaction_id)
+        self._emit_verification(
+            "started",
+            transaction_id=transaction_id,
+            user_id=user_id,
+            device_id=device_id,
+        )
+        return transaction_id
+
+    async def async_confirm_verification(self, transaction_id: str) -> None:
+        """Confirm SAS emojis match. This is the only path that verifies a device."""
+        nio = self._require_nio()
+        if self._sas_is_timed_out(nio, transaction_id):
+            await self._timeout_verification(nio, transaction_id)
+            raise MatrixE2EEError(ERROR_VERIFICATION_TIMEOUT, "verification timed out")
+        sas = self._get_sas(nio, transaction_id)
+        if sas is None:
+            self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
+            raise MatrixE2EEError(ERROR_INVALID_TRANSACTION, "unknown verification transaction")
+        confirm = getattr(nio, "confirm_short_auth_string", None) or getattr(
+            nio, "confirm_key_verification", None
+        )
+        if confirm is None:
+            self._emit_error(ERROR_ENCRYPTION_UNAVAILABLE, transaction_id=transaction_id)
+            raise MatrixE2EEError(
+                ERROR_ENCRYPTION_UNAVAILABLE, "key verification is unavailable"
+            )
+        try:
+            response = await _maybe_await(confirm(transaction_id))
+        except Exception as err:  # noqa: BLE001 — never log SAS secrets
+            code = _verification_error_code(err)
+            self._emit_error(code, transaction_id=transaction_id)
+            raise MatrixE2EEError(code, "confirm verification failed") from err
+        if _is_error_response(response):
+            code = _verification_error_code(response)
+            self._emit_error(code, transaction_id=transaction_id)
+            raise MatrixE2EEError(code, "confirm verification failed")
+        user_id, device_id = self._sas_party(sas)
+        if bool(getattr(sas, "verified", False)):
+            self._sas_started_at.pop(transaction_id, None)
+            self._emit_verification(
+                "done",
+                transaction_id=transaction_id,
+                user_id=user_id,
+                device_id=device_id,
+            )
+        else:
+            self._emit_verification(
+                "sas",
+                transaction_id=transaction_id,
+                user_id=user_id,
+                device_id=device_id,
+                emojis=self._sas_emojis(sas),
+            )
+
+    async def async_cancel_verification(self, transaction_id: str) -> None:
+        """Cancel an in-progress SAS. Does not verify the device."""
+        nio = self._require_nio()
+        sas = self._get_sas(nio, transaction_id)
+        if sas is None:
+            self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
+            raise MatrixE2EEError(ERROR_INVALID_TRANSACTION, "unknown verification transaction")
+        user_id, device_id = self._sas_party(sas)
+        cancel = getattr(nio, "cancel_key_verification", None)
+        if cancel is not None:
+            try:
+                response = await _maybe_await(cancel(transaction_id, reject=False))
+            except Exception as err:  # noqa: BLE001 — cancel must still emit
+                code = _verification_error_code(err)
+                self._emit_error(code, transaction_id=transaction_id)
+                raise MatrixE2EEError(code, "cancel verification failed") from err
+            if _is_error_response(response):
+                code = _verification_error_code(response)
+                self._emit_error(code, transaction_id=transaction_id)
+                raise MatrixE2EEError(code, "cancel verification failed")
+        self._sas_started_at.pop(transaction_id, None)
+        self._emit_verification(
+            "canceled",
+            transaction_id=transaction_id,
+            user_id=user_id,
+            device_id=device_id,
+        )
+
+    async def _timeout_verification(self, nio: Any, transaction_id: str) -> None:
+        sas = self._get_sas(nio, transaction_id)
+        user_id, device_id = self._sas_party(sas) if sas is not None else (None, None)
+        cancel = getattr(nio, "cancel_key_verification", None)
+        if cancel is not None and sas is not None and not bool(getattr(sas, "canceled", False)):
+            try:
+                await _maybe_await(cancel(transaction_id, reject=False))
+            except Exception:  # noqa: BLE001 — timeout path still reports timeout
+                pass
+        self._sas_started_at.pop(transaction_id, None)
+        self._emit_error(ERROR_VERIFICATION_TIMEOUT, transaction_id=transaction_id)
+        self._emit_verification(
+            "timeout",
+            transaction_id=transaction_id,
+            user_id=user_id,
+            device_id=device_id,
+        )
+
+    async def handle_to_device_event(self, event: Any) -> None:
+        """Drive inbound SAS. Accepting the protocol is not device trust."""
+        nio = self.nio
+        if nio is None:
+            return
+        kind = _verification_kind(event)
+        if not kind:
+            return
+        transaction_id = getattr(event, "transaction_id", None)
+        if not isinstance(transaction_id, str) or not transaction_id:
+            return
+        if kind == "cancel":
+            sas = self._get_sas(nio, transaction_id)
+            user_id, device_id = self._sas_party(sas, event)
+            self._sas_started_at.pop(transaction_id, None)
+            self._emit_verification(
+                "canceled",
+                transaction_id=transaction_id,
+                user_id=user_id,
+                device_id=device_id,
+            )
+            return
+        if self._sas_is_timed_out(nio, transaction_id):
+            await self._timeout_verification(nio, transaction_id)
+            return
+        if kind == "start":
+            methods = getattr(event, "short_authentication_string", None) or []
+            if "emoji" not in methods:
+                return
+            accept = getattr(nio, "accept_key_verification", None)
+            if accept is not None:
+                try:
+                    await _maybe_await(accept(transaction_id))
+                except Exception:  # noqa: BLE001 — fail closed without trusting
+                    self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
+                    return
+            sas = self._get_sas(nio, transaction_id)
+            share = getattr(sas, "share_key", None) if sas is not None else None
+            if share is not None:
+                try:
+                    await self._send_to_device(nio, share())
+                except Exception:  # noqa: BLE001 — do not log keys
+                    self._emit_error(ERROR_SEND_FAILED, transaction_id=transaction_id)
+                    return
+            self._mark_sas_started(transaction_id)
+            user_id, device_id = self._sas_party(sas, event)
+            self._emit_verification(
+                "started",
+                transaction_id=transaction_id,
+                user_id=user_id,
+                device_id=device_id,
+            )
+            return
+        sas = self._get_sas(nio, transaction_id)
+        if sas is None:
+            self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
+            return
+        user_id, device_id = self._sas_party(sas, event)
+        self._mark_sas_started(transaction_id)
+        if kind == "key":
+            self._emit_verification(
+                "sas",
+                transaction_id=transaction_id,
+                user_id=user_id,
+                device_id=device_id,
+                emojis=self._sas_emojis(sas),
+            )
+            return
+        if kind == "mac":
+            get_mac = getattr(sas, "get_mac", None)
+            if get_mac is not None:
+                try:
+                    await self._send_to_device(nio, get_mac())
+                except Exception:  # noqa: BLE001 — protocol error is not trust
+                    return
+            if bool(getattr(sas, "verified", False)):
+                self._sas_started_at.pop(transaction_id, None)
+                self._emit_verification(
+                    "done",
+                    transaction_id=transaction_id,
+                    user_id=user_id,
+                    device_id=device_id,
+                )
+
+
+def _key_verification_event_type() -> Any:
+    try:
+        from nio.events import KeyVerificationEvent
+
+        return KeyVerificationEvent
+    except Exception:  # noqa: BLE001 — tests may not install nio extras
+        return None
+
+
+def _verification_kind(event: Any) -> str:
+    name = type(event).__name__
+    by_name = {
+        "KeyVerificationStart": "start",
+        "KeyVerificationKey": "key",
+        "KeyVerificationMac": "mac",
+        "KeyVerificationCancel": "cancel",
+    }
+    if name in by_name:
+        return by_name[name]
+    event_type = getattr(event, "type", None)
+    by_type = {
+        "m.key.verification.start": "start",
+        "m.key.verification.key": "key",
+        "m.key.verification.mac": "mac",
+        "m.key.verification.cancel": "cancel",
+    }
+    if isinstance(event_type, str) and event_type in by_type:
+        return by_type[event_type]
+    return ""
+
+
+def _transaction_id_from_verifications(
+    verifications: Any, user_id: str, device_id: str
+) -> str | None:
+    if not isinstance(verifications, dict) or not verifications:
+        return None
+    for txn, sas in verifications.items():
+        device = getattr(sas, "other_olm_device", None)
+        other_user = getattr(device, "user_id", None)
+        other_device = getattr(device, "device_id", None) or getattr(device, "id", None)
+        if other_user == user_id and other_device == device_id:
+            return str(txn)
+    if len(verifications) == 1:
+        return str(next(iter(verifications)))
+    return None
+
+
+def _verification_error_code(err: Any) -> str:
+    name = type(err).__name__.lower()
+    text = str(err).lower()
+    if "timeout" in name or "timeout" in text:
+        return ERROR_VERIFICATION_TIMEOUT
+    if "localprotocol" in name or "does not exist" in text or "transaction" in text:
+        return ERROR_INVALID_TRANSACTION
+    if "unverified" in name or "unverified" in text:
+        return ERROR_UNVERIFIED_DEVICE
+    return ERROR_SEND_FAILED
+
 
 def _room_message_type() -> Any:
     try:
@@ -464,3 +828,4 @@ def _send_error_code(err: Any) -> str:
     if "encryption" in name or "olm" in name or "olm" in text:
         return ERROR_ENCRYPTION_UNAVAILABLE
     return ERROR_SEND_FAILED
+

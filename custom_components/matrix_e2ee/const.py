@@ -18,13 +18,23 @@ STORE_DIRNAME = "matrix_e2ee_store"
 SESSION_VERSION = 1
 
 SERVICE_SEND_MESSAGE = "send_message"
+SERVICE_START_VERIFICATION = "start_verification"
+SERVICE_CONFIRM_VERIFICATION = "confirm_verification"
+SERVICE_CANCEL_VERIFICATION = "cancel_verification"
 ATTR_MESSAGE = "message"
 ATTR_ROOM_ID = "room_id"
+ATTR_USER_ID = "user_id"
+ATTR_DEVICE_ID = "device_id"
+ATTR_TRANSACTION_ID = "transaction_id"
 
 EVENT_COMMAND = "matrix_e2ee_command"
 EVENT_ERROR = "matrix_e2ee_error"
+EVENT_VERIFICATION = "matrix_e2ee_verification"
 
 DEVICE_NAME = "Home Assistant matrix_e2ee"
+
+# Matrix interactive verification request timeout (Client-Server spec).
+VERIFICATION_TIMEOUT_SECONDS = 600
 
 ERROR_SESSION_CORRUPT = "session_corrupt"
 ERROR_SESSION_MISSING = "session_missing"
@@ -37,6 +47,9 @@ ERROR_SEND_FAILED = "send_failed"
 ERROR_UNVERIFIED_DEVICE = "unverified_device"
 ERROR_STORE_MISSING = "store_missing"
 ERROR_ENCRYPTION_UNAVAILABLE = "encryption_unavailable"
+ERROR_DEVICE_MISSING = "device_missing"
+ERROR_INVALID_TRANSACTION = "invalid_transaction"
+ERROR_VERIFICATION_TIMEOUT = "verification_timeout"
 
 # matrix-nio ClientConfig default. First login must never persist this value.
 NIO_DEFAULT_PICKLE_KEY = "DEFAULT_KEY"
