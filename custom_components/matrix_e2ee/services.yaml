@@ -1,0 +1,18 @@
+send_message:
+  name: Send message
+  description: Send a text message to an allowlisted Matrix room.
+  fields:
+    message:
+      name: Message
+      description: Plain text to send. The integration never logs this value.
+      required: true
+      example: "Hello"
+      selector:
+        text:
+    room_id:
+      name: Room ID
+      description: Matrix room ID. Must be listed in allowed_rooms.
+      required: true
+      example: "!roomid:example.org"
+      selector:
+        text:

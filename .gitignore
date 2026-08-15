@@ -1,0 +1,40 @@
+# Home Assistant Matrix session and crypto store (never commit)
+.storage/matrix_e2ee_session.json
+.storage/matrix_e2ee_store/
+.storage/matrix_e2ee_*
+
+# Pickle / Olm / Megolm artifacts
+*.pickle
+*.pickle.key
+
+# Secrets and credentials
+secrets.yaml
+*.secret
+.env
+.env.*
+credentials.json
+*_credentials.*
+
+# Linear workflow execution context (must stay local)
+.agent-work/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
