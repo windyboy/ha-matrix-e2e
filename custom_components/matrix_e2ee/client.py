@@ -21,6 +21,9 @@ from .const import (
     ERROR_ROOM_NOT_ALLOWED,
     ERROR_SEND_FAILED,
     ERROR_SESSION_MISSING,
+    ERROR_SOFT_LOGOUT,
+    ERROR_HARD_LOGOUT,
+    ERROR_REFRESH_TOKEN_UNSUPPORTED,
     ERROR_UNVERIFIED_DEVICE,
     ERROR_VERIFICATION_TIMEOUT,
     EVENT_COMMAND,
@@ -35,6 +38,7 @@ from .storage import (
     atomic_save_session,
     ensure_store_dir,
     load_session,
+    store_path,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,6 +109,38 @@ class MatrixE2EEError(Exception):
 
 def _is_error_response(response: Any) -> bool:
     return type(response).__name__.endswith("Error")
+
+
+def _is_soft_logout(response: Any) -> bool:
+    if bool(getattr(response, "soft_logout", False)):
+        return True
+    body = getattr(response, "body", None)
+    if isinstance(body, dict) and bool(body.get("soft_logout")):
+        return True
+    return False
+
+
+def _is_auth_failure(response: Any) -> bool:
+    errcode = getattr(response, "errcode", None)
+    if errcode == "M_UNKNOWN_TOKEN":
+        return True
+    status = getattr(response, "status_code", None)
+    if status in (401, "401"):
+        return True
+    name = type(response).__name__.lower()
+    text = str(response).lower()
+    return "unauthorized" in name or "unknown_token" in text or "unknown token" in text
+
+
+def _has_unsupported_token_lifetime(response: Any, nio: Any) -> bool:
+    """v1 refuses refresh tokens and short-lived access tokens."""
+    refresh = getattr(response, "refresh_token", None) or getattr(nio, "refresh_token", None)
+    if isinstance(refresh, str) and refresh:
+        return True
+    expires = getattr(response, "expires_in_ms", None)
+    if expires is None:
+        expires = getattr(nio, "expires_in_ms", None)
+    return isinstance(expires, (int, float)) and expires > 0
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -201,6 +237,7 @@ class MatrixE2EEClient:
         self._sas_started_at: dict[str, float] = {}
         self._verification_timeout = VERIFICATION_TIMEOUT_SECONDS
         self._monotonic = time.monotonic
+        self._soft_logged_out = False
 
     def _make_nio(
         self,
@@ -253,7 +290,8 @@ class MatrixE2EEClient:
             await self._first_login()
         else:
             await self._restore(existing)
-        self.enable_verification_callbacks()
+        if not self._soft_logged_out:
+            self.enable_verification_callbacks()
 
     async def _first_login(self) -> None:
         if not self._password:
@@ -276,6 +314,12 @@ class MatrixE2EEClient:
         if not nio.user_id or not nio.device_id or not nio.access_token:
             await self._close_nio()
             raise MatrixE2EEError(ERROR_LOGIN_FAILED, "matrix login returned incomplete device")
+        if _has_unsupported_token_lifetime(response, nio):
+            await self._close_nio()
+            raise MatrixE2EEError(
+                ERROR_REFRESH_TOKEN_UNSUPPORTED,
+                "short-lived or refresh tokens are not supported; refusing to persist session",
+            )
         session = MatrixSession(
             version=1,
             user_id=nio.user_id,
@@ -304,7 +348,22 @@ class MatrixE2EEClient:
         nio.restore_login(session.user_id, session.device_id, session.access_token)
         whoami = await nio.whoami()
         if _is_error_response(whoami):
+            if _is_soft_logout(whoami):
+                self.session = session
+                self._first_setup = False
+                self._soft_logged_out = True
+                self._install_secret_filter()
+                self._emit_error(ERROR_SOFT_LOGOUT)
+                _LOGGER.warning(
+                    "matrix_e2ee soft logout; crypto store kept; call matrix_e2ee.reauthenticate"
+                )
+                return
             await self._close_nio()
+            if _is_auth_failure(whoami):
+                raise MatrixE2EEError(
+                    ERROR_HARD_LOGOUT,
+                    "hard logout; delete session and crypto store, then login as a new device",
+                )
             raise MatrixE2EEError(ERROR_RESTORE_FAILED, "restore whoami failed")
         if nio.device_id != session.device_id or nio.user_id != session.user_id:
             await self._close_nio()
@@ -359,11 +418,106 @@ class MatrixE2EEClient:
         payload.update(extra)
         self._fire_event(EVENT_ERROR, payload)
 
+    def _reject_if_soft_logged_out(self) -> None:
+        if self._soft_logged_out:
+            self._emit_error(ERROR_SOFT_LOGOUT)
+            raise MatrixE2EEError(
+                ERROR_SOFT_LOGOUT,
+                "session is soft-logged-out; call matrix_e2ee.reauthenticate",
+            )
+
+    def _restore_session_token(self, nio: Any, session: MatrixSession) -> None:
+        restore = getattr(nio, "restore_login", None)
+        if restore is not None:
+            restore(session.user_id, session.device_id, session.access_token)
+            return
+        nio.user_id = session.user_id
+        nio.device_id = session.device_id
+        nio.access_token = session.access_token
+
+    def safe_diagnostics(self) -> dict[str, Any]:
+        """Return non-secret session/store status for the README runbook."""
+        store = store_path(self._config_dir)
+        try:
+            store_present = store.is_dir()
+        except OSError:
+            store_present = False
+        session = self.session
+        return {
+            "user_id": session.user_id if session is not None else None,
+            "device_id": session.device_id if session is not None else None,
+            "session_present": session is not None,
+            "store_present": store_present,
+            "soft_logged_out": self._soft_logged_out,
+            "encryption_enabled": True,
+            "store_sync_tokens": True,
+        }
+
+    async def async_reauthenticate(self, password: str) -> None:
+        """Replace the access token after soft logout. Never creates a new device."""
+        if not isinstance(password, str) or not password:
+            raise MatrixE2EEError(
+                ERROR_PASSWORD_REQUIRED,
+                "password is required to reauthenticate",
+            )
+        session = self.session
+        if session is None:
+            raise MatrixE2EEError(ERROR_SESSION_MISSING, "matrix client is not started")
+        nio = self._require_nio()
+        previous_password = self._password
+        self._password = password
+        self._install_secret_filter()
+        try:
+            response = await nio.login(password, device_name=DEVICE_NAME)
+        except Exception as err:  # noqa: BLE001 — never log the password
+            self._password = previous_password
+            self._install_secret_filter()
+            self._emit_error(ERROR_LOGIN_FAILED)
+            raise MatrixE2EEError(ERROR_LOGIN_FAILED, "reauthenticate login failed") from err
+        if _is_error_response(response):
+            self._restore_session_token(nio, session)
+            self._password = previous_password
+            self._install_secret_filter()
+            self._emit_error(ERROR_LOGIN_FAILED)
+            raise MatrixE2EEError(ERROR_LOGIN_FAILED, "reauthenticate login failed")
+        if _has_unsupported_token_lifetime(response, nio):
+            self._restore_session_token(nio, session)
+            self._password = previous_password
+            self._install_secret_filter()
+            self._emit_error(ERROR_REFRESH_TOKEN_UNSUPPORTED)
+            raise MatrixE2EEError(
+                ERROR_REFRESH_TOKEN_UNSUPPORTED,
+                "short-lived or refresh tokens are not supported",
+            )
+        if nio.device_id != session.device_id or nio.user_id != session.user_id:
+            self._restore_session_token(nio, session)
+            self._password = previous_password
+            self._install_secret_filter()
+            self._emit_error(ERROR_DEVICE_MISMATCH)
+            raise MatrixE2EEError(
+                ERROR_DEVICE_MISMATCH,
+                "homeserver returned a different device; refusing to replace token",
+            )
+        if not nio.access_token:
+            self._restore_session_token(nio, session)
+            self._password = previous_password
+            self._install_secret_filter()
+            self._emit_error(ERROR_LOGIN_FAILED)
+            raise MatrixE2EEError(ERROR_LOGIN_FAILED, "reauthenticate returned no access token")
+        new_session = session.with_access_token(nio.access_token)
+        atomic_save_session(self._config_dir, new_session)
+        self.session = new_session
+        self._soft_logged_out = False
+        self._install_secret_filter()
+        self.enable_verification_callbacks()
+        _LOGGER.info("matrix_e2ee reauthenticate replaced access token; device unchanged")
+
     async def async_send_message(self, room_id: str, message: str) -> None:
         """Send text to an allowlisted room. Never falls back to plaintext."""
         if not room_allowed(room_id, self.allowed_rooms):
             self._emit_error(ERROR_ROOM_NOT_ALLOWED, room_id=room_id)
             raise MatrixE2EEError(ERROR_ROOM_NOT_ALLOWED, "room is not allowlisted")
+        self._reject_if_soft_logged_out()
         nio = self._require_nio()
         room = _nio_room(nio, room_id)
         if room is not None and getattr(room, "encrypted", False) and not _olm_ready(nio):
@@ -391,7 +545,7 @@ class MatrixE2EEClient:
 
     def handle_incoming_event(self, room: Any, event: Any) -> None:
         """Process one inbound text event. Historical events are ignored until enabled."""
-        if not self._commands_enabled:
+        if self._soft_logged_out or not self._commands_enabled:
             return
         sender = getattr(event, "sender", None)
         room_id = getattr(room, "room_id", None) or getattr(event, "room_id", None)
@@ -442,6 +596,8 @@ class MatrixE2EEClient:
 
     async def async_sync_loop(self) -> None:
         """Initial sync without command replay; then incremental sync with callbacks."""
+        if self._soft_logged_out:
+            return
         nio = self._require_nio()
         since = _sync_since(nio)
         catch_up = self._first_setup or not since
@@ -539,6 +695,7 @@ class MatrixE2EEClient:
 
     async def async_start_verification(self, user_id: str, device_id: str) -> str:
         """Start SAS with a known device. Does not mark the device trusted."""
+        self._reject_if_soft_logged_out()
         nio = self._require_nio()
         device = self._lookup_device(nio, user_id, device_id)
         if device is None:
@@ -577,6 +734,7 @@ class MatrixE2EEClient:
 
     async def async_confirm_verification(self, transaction_id: str) -> None:
         """Confirm SAS emojis match. This is the only path that verifies a device."""
+        self._reject_if_soft_logged_out()
         nio = self._require_nio()
         if self._sas_is_timed_out(nio, transaction_id):
             await self._timeout_verification(nio, transaction_id)
@@ -623,6 +781,7 @@ class MatrixE2EEClient:
 
     async def async_cancel_verification(self, transaction_id: str) -> None:
         """Cancel an in-progress SAS. Does not verify the device."""
+        self._reject_if_soft_logged_out()
         nio = self._require_nio()
         sas = self._get_sas(nio, transaction_id)
         if sas is None:
@@ -669,6 +828,8 @@ class MatrixE2EEClient:
 
     async def handle_to_device_event(self, event: Any) -> None:
         """Drive inbound SAS. Accepting the protocol is not device trust."""
+        if self._soft_logged_out:
+            return
         nio = self.nio
         if nio is None:
             return

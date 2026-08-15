@@ -53,6 +53,16 @@ class MatrixSession:
     access_token: str
     pickle_key: str
 
+    def with_access_token(self, access_token: str) -> MatrixSession:
+        """Return a copy with a replaced access token. Store identity is unchanged."""
+        return MatrixSession(
+            version=self.version,
+            user_id=self.user_id,
+            device_id=self.device_id,
+            access_token=access_token,
+            pickle_key=self.pickle_key,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Return the on-disk JSON object. Caller must not log this."""
         return {

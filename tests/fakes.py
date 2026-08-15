@@ -9,6 +9,19 @@ class LoginError:
     """Name must end with Error so the client treats it as a failed nio response."""
 
 
+class WhoamiError:
+    """Name must end with Error so the client treats it as a failed nio response."""
+
+    def __init__(self, *, soft_logout=False, status_code=401, errcode="M_UNKNOWN_TOKEN"):
+        self.soft_logout = soft_logout
+        self.status_code = status_code
+        self.errcode = errcode
+        self.message = "Invalid access token"
+
+    def __str__(self):
+        return self.message
+
+
 class UnverifiedDeviceError(Exception):
     """Raised by fake room_send when the room has unverified devices."""
 
@@ -83,6 +96,13 @@ class FakeNio:
         self.login_calls = []
         self.restore_called_with = None
         self.login_should_fail = False
+        self.whoami_soft_logout = False
+        self.whoami_hard_logout = False
+        self.login_refresh_token = False
+        self.login_expires_in_ms = None
+        self.login_device_id = None
+        self.refresh_token = None
+        self.issued_access_tokens: list[str] = []
         self.send_error: Exception | None = None
         self.closed = False
         self.sync_calls = 0
@@ -104,8 +124,29 @@ class FakeNio:
         if self.login_should_fail:
             return LoginError()
         self.user_id = self.user_id or self.user
-        self.device_id = self.device_id or "HABOTABC"
-        self.access_token = self.access_token or "syt_test_access_token_value"
+        if self.login_device_id:
+            self.device_id = self.login_device_id
+        else:
+            self.device_id = self.device_id or "HABOTABC"
+        if self.access_token:
+            token = f"syt_rotated_access_token_{len(self.issued_access_tokens) + 1}"
+        else:
+            token = "syt_test_access_token_value"
+        self.access_token = token
+        self.issued_access_tokens.append(token)
+        if self.login_refresh_token:
+            self.refresh_token = "syt_refresh_token_value"
+            return SimpleNamespace(
+                access_token=token,
+                refresh_token=self.refresh_token,
+                expires_in_ms=60_000,
+            )
+        if self.login_expires_in_ms is not None:
+            return SimpleNamespace(
+                access_token=token,
+                refresh_token=None,
+                expires_in_ms=self.login_expires_in_ms,
+            )
         return object()
 
     def restore_login(self, user_id, device_id, access_token):
@@ -113,8 +154,13 @@ class FakeNio:
         self.user_id = user_id
         self.device_id = device_id
         self.access_token = access_token
+        self.refresh_token = None
 
     async def whoami(self):
+        if self.whoami_soft_logout:
+            return WhoamiError(soft_logout=True)
+        if self.whoami_hard_logout:
+            return WhoamiError(soft_logout=False)
         return object()
 
     async def room_send(

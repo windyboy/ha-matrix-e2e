@@ -7,6 +7,7 @@ import logging
 from .const import (
     ATTR_DEVICE_ID,
     ATTR_MESSAGE,
+    ATTR_PASSWORD,
     ATTR_ROOM_ID,
     ATTR_TRANSACTION_ID,
     ATTR_USER_ID,
@@ -22,6 +23,7 @@ from .const import (
     EVENT_ERROR,
     SERVICE_CANCEL_VERIFICATION,
     SERVICE_CONFIRM_VERIFICATION,
+    SERVICE_REAUTHENTICATE,
     SERVICE_SEND_MESSAGE,
     SERVICE_START_VERIFICATION,
 )
@@ -78,6 +80,7 @@ else:
         }
     )
     TRANSACTION_SCHEMA = vol.Schema({vol.Required(ATTR_TRANSACTION_ID): cv.string})
+    REAUTHENTICATE_SCHEMA = vol.Schema({vol.Required(ATTR_PASSWORD): cv.string})
 
     def _fire_event(hass: HomeAssistant, event_type: str, data: dict) -> None:
         hass.bus.async_fire(event_type, data)
@@ -160,6 +163,24 @@ else:
             SERVICE_CANCEL_VERIFICATION,
             _handle_cancel_verification,
             schema=TRANSACTION_SCHEMA,
+        )
+
+        async def _handle_reauthenticate(call) -> None:
+            try:
+                await client.async_reauthenticate(call.data[ATTR_PASSWORD])
+            except MatrixE2EEError as err:
+                _LOGGER.error("matrix_e2ee reauthenticate failed: %s", err.code)
+                _fire_event(hass, EVENT_ERROR, {"code": err.code})
+                return
+            task = client._sync_task
+            if task is None or getattr(task, "done", lambda: True)():
+                client._sync_task = hass.async_create_task(client.async_sync_loop())
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_REAUTHENTICATE,
+            _handle_reauthenticate,
+            schema=REAUTHENTICATE_SCHEMA,
         )
 
         client._sync_task = hass.async_create_task(client.async_sync_loop())
