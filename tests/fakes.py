@@ -13,6 +13,45 @@ class UnverifiedDeviceError(Exception):
     """Raised by fake room_send when the room has unverified devices."""
 
 
+class FakeOlmDevice:
+    def __init__(self, user_id, device_id, verified=False):
+        self.user_id = user_id
+        self.device_id = device_id
+        self.verified = verified
+
+
+class FakeSas:
+    def __init__(self, transaction_id, user_id, device_id, we_started_it=False):
+        self.transaction_id = transaction_id
+        self.other_olm_device = FakeOlmDevice(user_id, device_id)
+        self.we_started_it = we_started_it
+        self.sas_accepted = False
+        self.canceled = False
+        self.timed_out = False
+        self.verified = False
+        self.verified_devices: list[str] = []
+        self.emojis = [("⚓", "Anchor"), ("☎️", "Telephone")]
+
+    def get_emoji(self):
+        return list(self.emojis)
+
+    def share_key(self):
+        return SimpleNamespace(type="m.key.verification.key", transaction_id=self.transaction_id)
+
+    def get_mac(self):
+        return SimpleNamespace(type="m.key.verification.mac", transaction_id=self.transaction_id)
+
+    def accept_sas(self):
+        self.sas_accepted = True
+        self.verified = True
+        self.verified_devices = [self.other_olm_device.device_id]
+        self.other_olm_device.verified = True
+
+
+class LocalProtocolError(Exception):
+    """Name matches nio.LocalProtocolError for error-code mapping."""
+
+
 class FakeOlm:
     """Presence-only stand-in: nio encrypts only when client.olm is set."""
 
@@ -54,6 +93,11 @@ class FakeNio:
         self.next_batch: str | None = None
         self.sync_forever_calls: list[dict] = []
         self.plaintext_fallback_attempted = False
+        self.device_store: dict[str, dict[str, FakeOlmDevice]] = {}
+        self.key_verifications: dict[str, FakeSas] = {}
+        self.to_device_callbacks = []
+        self.to_device_sent = []
+        self.verified_devices: set[tuple[str, str]] = set()
 
     async def login(self, password, device_name=""):
         self.login_calls.append({"password": password, "device_name": device_name})
@@ -84,7 +128,8 @@ class FakeNio:
             if self.olm is None:
                 self.plaintext_fallback_attempted = True
                 raise RuntimeError("refusing plaintext fallback into an encrypted room")
-            if not self.devices_trusted:
+            trusted = self.devices_trusted or self._all_known_devices_verified()
+            if not trusted:
                 raise UnverifiedDeviceError("room contains unverified devices")
         self.sent.append(
             {
@@ -99,6 +144,70 @@ class FakeNio:
 
     def add_event_callback(self, callback, event_type):
         self.callbacks.append((callback, event_type))
+
+    def add_to_device_callback(self, callback, event_type):
+        self.to_device_callbacks.append((callback, event_type))
+
+    def _all_known_devices_verified(self) -> bool:
+        devices = [
+            device
+            for user_devices in self.device_store.values()
+            for device in user_devices.values()
+        ]
+        return bool(devices) and all(device.verified for device in devices)
+
+    def add_device(self, user_id, device_id, verified=False):
+        device = FakeOlmDevice(user_id, device_id, verified=verified)
+        self.device_store.setdefault(user_id, {})[device_id] = device
+        return device
+
+    async def start_key_verification(self, device, tx_id=None):
+        txn = tx_id or f"txn-{device.device_id}"
+        sas = FakeSas(txn, device.user_id, device.device_id, we_started_it=True)
+        self.key_verifications[txn] = sas
+        self.to_device_sent.append({"op": "start", "transaction_id": txn})
+        return object()
+
+    async def accept_key_verification(self, transaction_id, tx_id=None):
+        sas = self.key_verifications.get(transaction_id)
+        if sas is None:
+            raise LocalProtocolError(
+                f"Key verification with the transaction id {transaction_id} does not exist."
+            )
+        sas.sas_accepted = True
+        self.to_device_sent.append({"op": "accept", "transaction_id": transaction_id})
+        return object()
+
+    async def confirm_short_auth_string(self, transaction_id):
+        sas = self.key_verifications.get(transaction_id)
+        if sas is None:
+            raise LocalProtocolError(
+                f"Key verification with the transaction id {transaction_id} does not exist."
+            )
+        sas.accept_sas()
+        self.verified_devices.add((sas.other_olm_device.user_id, sas.other_olm_device.device_id))
+        user_devices = self.device_store.get(sas.other_olm_device.user_id, {})
+        stored = user_devices.get(sas.other_olm_device.device_id)
+        if stored is not None:
+            stored.verified = True
+        self.to_device_sent.append({"op": "confirm", "transaction_id": transaction_id})
+        return object()
+
+    async def cancel_key_verification(self, transaction_id, reject=False):
+        sas = self.key_verifications.get(transaction_id)
+        if sas is None:
+            raise LocalProtocolError(
+                f"Key verification with the transaction id {transaction_id} does not exist."
+            )
+        sas.canceled = True
+        self.to_device_sent.append(
+            {"op": "cancel", "transaction_id": transaction_id, "reject": reject}
+        )
+        return object()
+
+    async def to_device(self, message, tx_id=None):
+        self.to_device_sent.append({"op": "to_device", "message": message, "tx_id": tx_id})
+        return object()
 
     async def sync(self, timeout=0, full_state=None):
         self.sync_calls += 1

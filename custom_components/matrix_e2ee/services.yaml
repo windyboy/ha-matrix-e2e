@@ -16,3 +16,46 @@ send_message:
       example: "!roomid:example.org"
       selector:
         text:
+
+start_verification:
+  name: Start SAS verification
+  description: Start emoji SAS with a device already in the crypto store. Does not trust the device until confirm_verification.
+  fields:
+    user_id:
+      name: User ID
+      description: Matrix user ID of the other device.
+      required: true
+      example: "@admin:example.org"
+      selector:
+        text:
+    device_id:
+      name: Device ID
+      description: Matrix device ID of the other device.
+      required: true
+      example: "ELEMENTABC"
+      selector:
+        text:
+
+confirm_verification:
+  name: Confirm SAS verification
+  description: Confirm that the SAS emojis match. This is the only step that marks the device verified.
+  fields:
+    transaction_id:
+      name: Transaction ID
+      description: SAS transaction id from matrix_e2ee_verification.
+      required: true
+      example: "txn-1"
+      selector:
+        text:
+
+cancel_verification:
+  name: Cancel SAS verification
+  description: Cancel an in-progress SAS transaction. The device stays unverified.
+  fields:
+    transaction_id:
+      name: Transaction ID
+      description: SAS transaction id from matrix_e2ee_verification.
+      required: true
+      example: "txn-1"
+      selector:
+        text:

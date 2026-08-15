@@ -5,8 +5,11 @@ from __future__ import annotations
 import logging
 
 from .const import (
+    ATTR_DEVICE_ID,
     ATTR_MESSAGE,
     ATTR_ROOM_ID,
+    ATTR_TRANSACTION_ID,
+    ATTR_USER_ID,
     CONF_ALLOWED_ROOMS,
     CONF_ALLOWED_USERS,
     CONF_COMMAND_PREFIX,
@@ -17,7 +20,10 @@ from .const import (
     DEFAULT_COMMAND_PREFIX,
     DOMAIN,
     EVENT_ERROR,
+    SERVICE_CANCEL_VERIFICATION,
+    SERVICE_CONFIRM_VERIFICATION,
     SERVICE_SEND_MESSAGE,
+    SERVICE_START_VERIFICATION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +71,13 @@ else:
             vol.Required(ATTR_ROOM_ID): cv.string,
         }
     )
+    START_VERIFICATION_SCHEMA = vol.Schema(
+        {
+            vol.Required(ATTR_USER_ID): cv.string,
+            vol.Required(ATTR_DEVICE_ID): cv.string,
+        }
+    )
+    TRANSACTION_SCHEMA = vol.Schema({vol.Required(ATTR_TRANSACTION_ID): cv.string})
 
     def _fire_event(hass: HomeAssistant, event_type: str, data: dict) -> None:
         hass.bus.async_fire(event_type, data)
@@ -105,6 +118,48 @@ else:
             SERVICE_SEND_MESSAGE,
             _handle_send,
             schema=SEND_MESSAGE_SCHEMA,
+        )
+
+        async def _handle_start_verification(call) -> None:
+            try:
+                await client.async_start_verification(
+                    call.data[ATTR_USER_ID], call.data[ATTR_DEVICE_ID]
+                )
+            except MatrixE2EEError as err:
+                _LOGGER.error("matrix_e2ee start_verification failed: %s", err.code)
+                _fire_event(hass, EVENT_ERROR, {"code": err.code})
+
+        async def _handle_confirm_verification(call) -> None:
+            try:
+                await client.async_confirm_verification(call.data[ATTR_TRANSACTION_ID])
+            except MatrixE2EEError as err:
+                _LOGGER.error("matrix_e2ee confirm_verification failed: %s", err.code)
+                _fire_event(hass, EVENT_ERROR, {"code": err.code})
+
+        async def _handle_cancel_verification(call) -> None:
+            try:
+                await client.async_cancel_verification(call.data[ATTR_TRANSACTION_ID])
+            except MatrixE2EEError as err:
+                _LOGGER.error("matrix_e2ee cancel_verification failed: %s", err.code)
+                _fire_event(hass, EVENT_ERROR, {"code": err.code})
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_START_VERIFICATION,
+            _handle_start_verification,
+            schema=START_VERIFICATION_SCHEMA,
+        )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_CONFIRM_VERIFICATION,
+            _handle_confirm_verification,
+            schema=TRANSACTION_SCHEMA,
+        )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_CANCEL_VERIFICATION,
+            _handle_cancel_verification,
+            schema=TRANSACTION_SCHEMA,
         )
 
         client._sync_task = hass.async_create_task(client.async_sync_loop())

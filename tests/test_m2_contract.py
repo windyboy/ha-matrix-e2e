@@ -138,21 +138,16 @@ async def test_store_loss_is_new_device_not_history_recovery(tmp_path):
     assert "recover" not in message
 
 
-def test_no_admin_token_or_sas_login_paths():
+def test_no_admin_token_or_plaintext_message_event():
     client_src = _src("client.py")
     init_src = _src("__init__.py")
-    services_src = _src("services.yaml")
     const_src = _src("const.py")
     for blob in (client_src, init_src):
         assert "login_with_token" not in blob
         assert "login_raw" not in blob
         assert "admin_token" not in blob
-        assert "start_verification" not in blob
-        assert "confirm_verification" not in blob
-        assert "cancel_verification" not in blob
         assert "ignore_unverified_devices=True" not in blob
         assert "matrix_e2ee_message" not in blob
-    assert "verification" not in services_src
     assert "EVENT_MESSAGE" not in const_src
 
 
