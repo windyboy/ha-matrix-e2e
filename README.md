@@ -5,9 +5,74 @@ Home Assistant **custom** integration that runs a dedicated Matrix bot with a pe
 - Unique domain: `matrix_e2ee`
 - Does **not** override Home Assistant’s built-in `matrix` integration
 - Python, `matrix-nio[e2e]==0.26.0`
-- YAML setup only in M1–M4 (no Config Flow)
+- YAML setup only (no Config Flow, not in HACS)
 
-Install by copying `custom_components/matrix_e2ee` into `<config>/custom_components/matrix_e2ee`.
+## Installation
+
+This is a **manual** custom integration. There is no HACS listing and no Config Flow.
+
+Use a dedicated **non-admin** Matrix bot account. Do not run Home Assistant’s built-in `matrix` integration and `matrix_e2ee` on the same bot account. Read the [security warning](#security-warning) before enabling it.
+
+`<config>` is the Home Assistant configuration directory (`/config` on Home Assistant OS / Container).
+
+### 1. Copy the integration
+
+Copy only the `matrix_e2ee` package into `custom_components`. The GitHub repository root is not that folder.
+
+**From a release archive** (recommended):
+
+1. Download the source zip of the latest release: https://github.com/windyboy/ha-matrix-e2e/releases
+2. Extract it, then copy `custom_components/matrix_e2ee` to the HA config directory:
+
+```bash
+mkdir -p /config/custom_components
+cp -a custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
+```
+
+**From git** (replace `v0.1.1` with the [release tag](https://github.com/windyboy/ha-matrix-e2e/releases) you want):
+
+```bash
+git clone --depth 1 --branch v0.1.1 https://github.com/windyboy/ha-matrix-e2e.git /tmp/ha-matrix-e2e
+mkdir -p /config/custom_components
+cp -a /tmp/ha-matrix-e2e/custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
+```
+
+The installed tree must be:
+
+```text
+<config>/custom_components/matrix_e2ee/manifest.json
+<config>/custom_components/matrix_e2ee/__init__.py
+<config>/custom_components/matrix_e2ee/client.py
+<config>/custom_components/matrix_e2ee/const.py
+<config>/custom_components/matrix_e2ee/storage.py
+<config>/custom_components/matrix_e2ee/services.yaml
+```
+
+### 2. Add YAML and the bot password
+
+Put the password in `secrets.yaml`, not in git:
+
+```yaml
+# secrets.yaml
+matrix_e2ee_password: "your-bot-password"
+```
+
+Then add the block in `configuration.yaml` (see [Configuration](#configuration-yaml)). Password is required only on first login, when no session file exists yet.
+
+### 3. Restart Home Assistant
+
+1. Developer Tools → YAML → Check configuration.
+2. Restart Home Assistant.
+3. On first load, Home Assistant installs `matrix-nio[e2e]==0.26.0` from `manifest.json`. If that requirement fails to install, setup fails closed. Do not work around it with OS-level `pip` on Home Assistant OS.
+
+After a successful first start, HA writes:
+
+- `<config>/.storage/matrix_e2ee_session.json`
+- `<config>/.storage/matrix_e2ee_store/`
+
+Those files must stay on the same persistent volume as Home Assistant. They are gitignored and must never be committed.
+
+If setup fails, check `matrix_e2ee_error` events and the Home Assistant log (tokens, pickle keys, and passwords must not appear there). Soft logout recovery is in the [runbook](#recovery-runbook).
 
 ## Security warning
 
@@ -117,10 +182,10 @@ v1 does not rotate refresh tokens. If login or `reauthenticate` would receive a 
 
 | Milestone | Intent | Status |
 |---|---|---|
-| **M1** | Independent YAML integration, unencrypted-room send/commands, allowlist, startup/shutdown, mock tests | Merged (#2) |
-| **M2** | E2EE lifecycle: first login writes a full crypto device, restart restores the same device, encrypted text path, fail-closed unverified send/commands | Onto main (#4) |
-| **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Onto M2 (#5) |
-| **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | This delivery |
+| **M1** | Independent YAML integration, unencrypted-room send/commands, allowlist, startup/shutdown, mock tests | Released ([#2](https://github.com/windyboy/ha-matrix-e2e/pull/2)) |
+| **M2** | E2EE lifecycle: first login writes a full crypto device, restart restores the same device, encrypted text path, fail-closed unverified send/commands | Released ([#4](https://github.com/windyboy/ha-matrix-e2e/pull/4)) |
+| **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Released ([#5](https://github.com/windyboy/ha-matrix-e2e/pull/5)) |
+| **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Released ([#6](https://github.com/windyboy/ha-matrix-e2e/pull/6)) |
 
 M1 acceptance uses unencrypted test rooms. The first successful login still creates a full E2EE-capable Matrix device so M2 does not “upgrade” a non-crypto device.
 

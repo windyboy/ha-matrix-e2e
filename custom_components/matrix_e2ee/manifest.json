@@ -7,5 +7,5 @@
   "iot_class": "cloud_push",
   "loggers": ["custom_components.matrix_e2ee", "nio"],
   "requirements": ["matrix-nio[e2e]==0.26.0"],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
