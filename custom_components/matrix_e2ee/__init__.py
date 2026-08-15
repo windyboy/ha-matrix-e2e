@@ -12,6 +12,8 @@ from homeassistant.helpers import config_validation as cv
 
 from .client import MatrixE2EEClient, MatrixE2EEError
 from .const import (
+    ATTR_MESSAGE,
+    ATTR_ROOM_ID,
     CONF_ALLOWED_ROOMS,
     CONF_ALLOWED_USERS,
     CONF_COMMAND_PREFIX,
@@ -22,6 +24,7 @@ from .const import (
     DEFAULT_COMMAND_PREFIX,
     DOMAIN,
     EVENT_ERROR,
+    SERVICE_SEND_MESSAGE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +49,13 @@ CONFIG_SCHEMA = vol.Schema(
         )
     },
     extra=vol.ALLOW_EXTRA,
+)
+
+SEND_MESSAGE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_MESSAGE): cv.string,
+        vol.Required(ATTR_ROOM_ID): cv.string,
+    }
 )
 
 
@@ -74,6 +84,24 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         return False
 
     hass.data[DOMAIN] = {DATA_CLIENT: client}
+
+    async def _handle_send(call) -> None:
+        try:
+            await client.async_send_message(
+                call.data[ATTR_ROOM_ID], call.data[ATTR_MESSAGE]
+            )
+        except MatrixE2EEError as err:
+            _LOGGER.error("matrix_e2ee send failed: %s", err.code)
+            _fire_event(hass, EVENT_ERROR, {"code": err.code})
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SEND_MESSAGE,
+        _handle_send,
+        schema=SEND_MESSAGE_SCHEMA,
+    )
+
+    client._sync_task = hass.async_create_task(client.async_sync_loop())
 
     async def _on_stop(_event) -> None:
         await client.async_stop()
