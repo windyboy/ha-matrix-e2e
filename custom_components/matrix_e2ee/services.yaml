@@ -59,3 +59,15 @@ cancel_verification:
       example: "txn-1"
       selector:
         text:
+
+reauthenticate:
+  name: Reauthenticate
+  description: Replace the access token after a soft logout. Keeps the same device_id and crypto store. The password is never logged or placed in events.
+  fields:
+    password:
+      name: Password
+      description: Homeserver password for the bot account. Never logged.
+      required: true
+      selector:
+        text:
+          type: password
