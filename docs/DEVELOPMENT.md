@@ -17,6 +17,8 @@ python3 -m pytest
 
 These tests mock `nio.AsyncClient` and do not install Home Assistant or `pytest-homeassistant-custom-component`. If a required Home Assistant test API is missing for a later check, stop and ask. Do not invent a workaround or install packages into Home Assistant OS.
 
+M1 contract: `tests/test_m1_contract.py`. M2 contract: `tests/test_m2_contract.py`. Shared fake client: `tests/fakes.py`.
+
 ## Local layout
 
 Copy `custom_components/matrix_e2ee` into `<config>/custom_components/matrix_e2ee` on a Home Assistant instance. Configure YAML only (no Config Flow in M1/M2).

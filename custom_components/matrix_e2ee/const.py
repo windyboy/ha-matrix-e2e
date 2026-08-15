@@ -36,5 +36,9 @@ ERROR_ROOM_NOT_ALLOWED = "room_not_allowed"
 ERROR_SEND_FAILED = "send_failed"
 ERROR_UNVERIFIED_DEVICE = "unverified_device"
 ERROR_STORE_MISSING = "store_missing"
+ERROR_ENCRYPTION_UNAVAILABLE = "encryption_unavailable"
+
+# matrix-nio ClientConfig default. First login must never persist this value.
+NIO_DEFAULT_PICKLE_KEY = "DEFAULT_KEY"
 
 DATA_CLIENT = "client"
