@@ -4,7 +4,7 @@ Home Assistant **custom** integration that runs a dedicated Matrix bot with a pe
 
 - Unique domain: `matrix_e2ee`
 - Does **not** override Home Assistant’s built-in `matrix` integration
-- Python, `matrix-nio[e2e]==0.26.0`
+- Python, `matrix-nio[e2e]==0.26.0` with its E2EE extras (`vodozemac`, `peewee`, `cachetools`, `atomicwrites`) declared explicitly in `manifest.json`
 - YAML setup only (no Config Flow, not in HACS)
 
 ## Installation
@@ -63,7 +63,7 @@ Then add the block in `configuration.yaml` (see [Configuration](#configuration-y
 
 1. Developer Tools → YAML → Check configuration.
 2. Restart Home Assistant.
-3. On first load, Home Assistant installs `matrix-nio[e2e]==0.26.0` from `manifest.json`. If that requirement fails to install, setup fails closed. Do not work around it with OS-level `pip` on Home Assistant OS.
+3. On first load, Home Assistant installs `matrix-nio[e2e]==0.26.0` and its explicit E2EE dependencies (`vodozemac`, `peewee`, `cachetools`, `atomicwrites`) from `manifest.json`. The E2EE deps are listed explicitly because Home Assistant's requirement manager drops the `[e2e]` extra and would otherwise skip them. If any requirement fails to install, setup fails closed. Do not work around it with OS-level `pip` on Home Assistant OS.
 
 After a successful first start, HA writes:
 
