@@ -30,6 +30,7 @@ from custom_components.matrix_e2ee.storage import (
     session_path,
     store_path,
 )
+from tests.fakes import FakeNio, UnverifiedDeviceError
 
 
 ROOM = "!roomid:example.org"
@@ -39,88 +40,6 @@ DEVICE = "HABOTABC"
 TOKEN = "syt_test_access_token_value"
 PICKLE = "test-pickle-key-value"
 SECRET_BODY = "super-secret-message-body"
-
-
-class LoginError:
-    """Name must end with Error so the client treats it as a failed nio response."""
-
-
-class UnverifiedDeviceError(Exception):
-    """Raised by fake room_send when the room has unverified devices."""
-
-
-class FakeNio:
-    def __init__(
-        self,
-        homeserver,
-        user,
-        device_id="",
-        store_path="",
-        pickle_key=None,
-        **kwargs,
-    ):
-        self.homeserver = homeserver
-        self.user = user
-        self.device_id = device_id or ""
-        self.store_path = store_path
-        self.pickle_key = pickle_key
-        self.user_id = ""
-        self.access_token = ""
-        self.should_upload_keys = False
-        self.callbacks = []
-        self.sent = []
-        self.login_calls = []
-        self.restore_called_with = None
-        self.login_should_fail = False
-        self.send_error: Exception | None = None
-        self.closed = False
-        self.sync_calls = 0
-
-    async def login(self, password, device_name=""):
-        self.login_calls.append({"password": password, "device_name": device_name})
-        if self.login_should_fail:
-            return LoginError()
-        self.user_id = BOT
-        self.device_id = self.device_id or DEVICE
-        self.access_token = TOKEN
-        return object()
-
-    def restore_login(self, user_id, device_id, access_token):
-        self.restore_called_with = (user_id, device_id, access_token)
-        self.user_id = user_id
-        self.device_id = device_id
-        self.access_token = access_token
-
-    async def whoami(self):
-        return object()
-
-    async def room_send(
-        self, room_id, message_type, content, ignore_unverified_devices=False
-    ):
-        if self.send_error is not None:
-            raise self.send_error
-        self.sent.append(
-            {
-                "room_id": room_id,
-                "message_type": message_type,
-                "content": content,
-                "ignore_unverified_devices": ignore_unverified_devices,
-            }
-        )
-        return object()
-
-    def add_event_callback(self, callback, event_type):
-        self.callbacks.append((callback, event_type))
-
-    async def sync(self, timeout=0, full_state=None):
-        self.sync_calls += 1
-        return object()
-
-    async def sync_forever(self, timeout=0):
-        return None
-
-    async def close(self):
-        self.closed = True
 
 
 def _factory_holder():
