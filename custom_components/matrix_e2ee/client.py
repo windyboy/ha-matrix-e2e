@@ -826,6 +826,28 @@ class MatrixE2EEClient:
             device_id=device_id,
         )
 
+    def _should_auto_confirm(self, sas: Any) -> bool:
+        """Auto-confirm self-verification, or finish an already-confirmed SAS."""
+        if bool(getattr(sas, "sas_accepted", False)):
+            return True
+        session = self.session
+        if session is None:
+            return False
+        other_user = getattr(getattr(sas, "other_olm_device", None), "user_id", None)
+        return other_user is not None and other_user == session.user_id
+
+    async def _try_confirm(self, nio: Any, transaction_id: str) -> None:
+        """Send our MAC and verify the device once the SAS is accepted."""
+        confirm = getattr(nio, "confirm_short_auth_string", None) or getattr(
+            nio, "confirm_key_verification", None
+        )
+        if confirm is None:
+            return
+        try:
+            await _maybe_await(confirm(transaction_id))
+        except Exception:  # noqa: BLE001 — protocol error is not trust
+            return
+
     async def handle_to_device_event(self, event: Any) -> None:
         """Drive inbound SAS. Accepting the protocol is not device trust."""
         if self._soft_logged_out:
@@ -897,12 +919,8 @@ class MatrixE2EEClient:
             )
             return
         if kind == "mac":
-            get_mac = getattr(sas, "get_mac", None)
-            if get_mac is not None:
-                try:
-                    await self._send_to_device(nio, get_mac())
-                except Exception:  # noqa: BLE001 — protocol error is not trust
-                    return
+            if self._should_auto_confirm(sas):
+                await self._try_confirm(nio, transaction_id)
             if bool(getattr(sas, "verified", False)):
                 self._sas_started_at.pop(transaction_id, None)
                 self._emit_verification(
