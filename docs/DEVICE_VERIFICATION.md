@@ -136,6 +136,6 @@
 - **key 的发送归 nio 管**：无论哪个方向，bot 的 `key` 都由 nio 内部 `share_key()` 入队、`sync_forever` 发出；集成**不应**手动 `share_key`。
 - **mac 只由 `confirm_verification` 服务发送一次**：`confirm_short_auth_string()` 内部已 `accept_sas()` + `get_mac()`。
 - **已知问题（见对应 issue）**：
-  - **W1N-169**：当前实现对 key 和 mac 各多发一次（方向 A 中集成手动 `share_key`、`mac` handler 里 `_try_confirm` 重复发 mac）。计划修复。
+  - **W1N-169**：~~当前实现对 key 和 mac 各多发一次（方向 A 中集成手动 `share_key`、`mac` handler 里 `_try_confirm` 重复发 mac）。~~ 已修复：key 由 nio 内部状态机在收到 peer key 时统一发送，mac 仅由 `confirm_verification` 发送。
   - **W1N-170**：bot 上线后才新增的设备，第一次 SAS 的 `start` 会被 nio 丢弃（"unknown device"），需重试一次。暂缓解决。
   - **W1N-171**：SAS 全链路从未在真实 Matrix homeserver 上做过端到端验证（现有测试全用 FakeNio）。暂缓解决。

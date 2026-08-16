@@ -146,8 +146,7 @@ async def test_outbound_sas_confirm_then_encrypted_send_and_command(tmp_path):
     assert "expires_at" in sas_events[-1]
 
     await client.async_confirm_verification(txn)
-    sas = nio.key_verifications[txn]
-    sas.receive_mac()
+    nio.receive_verification_mac(txn)
     await client.handle_to_device_event(KeyVerificationMac(USER, txn))
     done = [item[1] for item in events if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done"]
     assert done
@@ -186,8 +185,7 @@ async def test_inbound_sas_accept_is_not_trust_until_confirm(tmp_path):
     assert err.value.code == ERROR_UNVERIFIED_DEVICE
 
     await client.async_confirm_verification(TXN)
-    sas = nio.key_verifications[TXN]
-    sas.receive_mac()
+    nio.receive_verification_mac(TXN)
     await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
     await client.async_send_message(ROOM, "hello")
     assert nio.sent[-1]["encrypted"] is True
@@ -245,7 +243,7 @@ async def test_mac_without_confirm_does_not_verify(tmp_path):
     nio.add_device(USER, PEER_DEVICE, verified=False)
     sas = FakeSas(TXN, USER, PEER_DEVICE)
     nio.key_verifications[TXN] = sas
-    sas.receive_mac()
+    nio.receive_verification_mac(TXN)
     await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
     assert sas.verified is False
     assert all(not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done") for item in events)
@@ -269,7 +267,7 @@ async def test_self_verification_requires_admin_confirm(tmp_path):
 
     await client.handle_to_device_event(KeyVerificationStart(BOT, TXN, PEER_DEVICE))
     await client.handle_to_device_event(KeyVerificationKey(BOT, TXN))
-    sas.receive_mac()
+    nio.receive_verification_mac(TXN)
     await client.handle_to_device_event(KeyVerificationMac(BOT, TXN))
 
     assert sas.verified is False
@@ -299,7 +297,7 @@ async def test_cross_user_mac_before_confirm_waits_for_admin(tmp_path):
 
     await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
     await client.handle_to_device_event(KeyVerificationKey(USER, TXN))
-    sas.receive_mac()
+    nio.receive_verification_mac(TXN)
     await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
 
     assert sas.verified is False
@@ -436,4 +434,45 @@ async def test_keys_query_failure_does_not_block_setup(tmp_path):
     await client.async_start()
     nio = created["nio"]
     assert BOT in nio.olm.users_for_key_query
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_inbound_start_accepts_without_sharing_key_directly(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    nio.key_verifications[TXN] = FakeSas(TXN, USER, PEER_DEVICE, we_started_it=False)
+
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+
+    # The bot must accept, but NOT share its key directly: nio's internal state
+    # machine shares it when the peer's key arrives (avoiding a double-send).
+    assert [s["op"] for s in nio.to_device_sent] == ["accept"]
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_confirm_sends_mac_exactly_once(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    nio.key_verifications[TXN] = FakeSas(TXN, USER, PEER_DEVICE, we_started_it=False)
+
+    await client.async_confirm_verification(TXN)
+    nio.receive_verification_mac(TXN)
+    await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
+
+    # The MAC is sent exactly once (by confirm), not re-sent by the mac handler.
+    confirms = [s for s in nio.to_device_sent if s["op"] == "confirm"]
+    assert len(confirms) == 1
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done" for item in events
+    )
     await client.async_stop()

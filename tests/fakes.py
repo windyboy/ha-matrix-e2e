@@ -261,14 +261,27 @@ class FakeNio:
         sas.get_mac()  # raises unless accepted (mirrors matrix-nio)
         self.to_device_sent.append({"op": "confirm", "transaction_id": transaction_id})
         if sas.verified:
-            self.verified_devices.add(
-                (sas.other_olm_device.user_id, sas.other_olm_device.device_id)
-            )
-            user_devices = self.device_store.get(sas.other_olm_device.user_id, {})
-            stored = user_devices.get(sas.other_olm_device.device_id)
-            if stored is not None:
-                stored.verified = True
+            self._verify_sas_device(sas)
         return object()
+
+    def _verify_sas_device(self, sas):
+        """Mark the device in a SAS as verified (mirrors nio verify_device)."""
+        self.verified_devices.add(
+            (sas.other_olm_device.user_id, sas.other_olm_device.device_id)
+        )
+        user_devices = self.device_store.get(sas.other_olm_device.user_id, {})
+        stored = user_devices.get(sas.other_olm_device.device_id)
+        if stored is not None:
+            stored.verified = True
+
+    def receive_verification_mac(self, transaction_id):
+        """Model nio's handle_key_verification on the peer's MAC: verify the device."""
+        sas = self.key_verifications.get(transaction_id)
+        if sas is None:
+            return
+        sas.receive_mac()
+        if sas.verified:
+            self._verify_sas_device(sas)
 
     async def cancel_key_verification(self, transaction_id, reject=False):
         sas = self.key_verifications.get(transaction_id)
