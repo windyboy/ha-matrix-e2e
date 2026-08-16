@@ -10,6 +10,7 @@ import pytest
 from custom_components.matrix_e2ee.client import MatrixE2EEClient, MatrixE2EEError
 from custom_components.matrix_e2ee.const import (
     ERROR_DEVICE_MISSING,
+    ERROR_FINGERPRINT_MISMATCH,
     ERROR_INVALID_TRANSACTION,
     ERROR_UNVERIFIED_DEVICE,
     ERROR_VERIFICATION_TIMEOUT,
@@ -255,7 +256,7 @@ async def test_mac_without_confirm_does_not_verify(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_self_verification_auto_completes(tmp_path):
+async def test_self_verification_requires_admin_confirm(tmp_path):
     factory, created = _factory_holder()
     events = []
     client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
@@ -271,11 +272,16 @@ async def test_self_verification_auto_completes(tmp_path):
     sas.receive_mac()
     await client.handle_to_device_event(KeyVerificationMac(BOT, TXN))
 
+    assert sas.verified is False
+    assert nio.device_store[BOT][PEER_DEVICE].verified is False
+    assert all(
+        not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done")
+        for item in events
+    )
+
+    await client.async_confirm_verification(TXN)
     assert sas.verified is True
     assert nio.device_store[BOT][PEER_DEVICE].verified is True
-    assert any(
-        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done" for item in events
-    )
     await client.async_stop()
 
 
@@ -349,12 +355,18 @@ async def test_safe_fingerprint_exposes_public_keys(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_verify_device_marks_known_device(tmp_path):
+async def test_verify_device_by_fingerprint_requires_match(tmp_path):
     factory, created = _factory_holder()
     client = _client(tmp_path, lambda t, d: None, factory)
     await client.async_start()
     nio = created["nio"]
     nio.add_device(USER, PEER_DEVICE, verified=False)
-    await client.async_verify_device(USER, PEER_DEVICE)
+
+    with pytest.raises(MatrixE2EEError) as exc:
+        await client.async_verify_device_by_fingerprint(USER, PEER_DEVICE, "wrong-key")
+    assert exc.value.code == ERROR_FINGERPRINT_MISMATCH
+    assert nio.device_store[USER][PEER_DEVICE].verified is False
+
+    await client.async_verify_device_by_fingerprint(USER, PEER_DEVICE, "ED25519_DEVICE_KEY")
     assert nio.device_store[USER][PEER_DEVICE].verified is True
     await client.async_stop()

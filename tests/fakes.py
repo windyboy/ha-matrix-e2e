@@ -27,10 +27,11 @@ class UnverifiedDeviceError(Exception):
 
 
 class FakeOlmDevice:
-    def __init__(self, user_id, device_id, verified=False):
+    def __init__(self, user_id, device_id, verified=False, ed25519="ED25519_DEVICE_KEY"):
         self.user_id = user_id
         self.device_id = device_id
         self.verified = verified
+        self.ed25519 = ed25519
 
 
 class FakeSas:
