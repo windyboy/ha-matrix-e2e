@@ -377,7 +377,11 @@ class MatrixE2EEClient:
         self._first_setup = True
         self._install_secret_filter()
         await self._upload_keys_if_needed()
-        _LOGGER.info("matrix_e2ee first login succeeded; session stored")
+        _LOGGER.warning(
+            "matrix_e2ee first login succeeded; user=%s device=%s; session stored",
+            nio.user_id,
+            nio.device_id,
+        )
 
     async def _restore(self, session: MatrixSession) -> None:
         if session.pickle_key == NIO_DEFAULT_PICKLE_KEY:
@@ -420,7 +424,11 @@ class MatrixE2EEClient:
         self._first_setup = False
         self._install_secret_filter()
         await self._upload_keys_if_needed()
-        _LOGGER.info("matrix_e2ee restored existing Matrix device")
+        _LOGGER.warning(
+            "matrix_e2ee restored existing device; user=%s device=%s",
+            nio.user_id,
+            nio.device_id,
+        )
 
     async def _upload_keys_if_needed(self) -> None:
         nio = self.nio
@@ -496,6 +504,7 @@ class MatrixE2EEClient:
     def _emit_error(self, code: str, **extra: Any) -> None:
         payload = {"code": code}
         payload.update(extra)
+        _LOGGER.warning("matrix_e2ee error %s", payload)
         self._fire_event(EVENT_ERROR, payload)
 
     def _reject_if_soft_logged_out(self) -> None:
@@ -729,6 +738,7 @@ class MatrixE2EEClient:
     def _emit_verification(self, stage: str, **extra: Any) -> None:
         payload = {"stage": stage}
         payload.update({key: value for key, value in extra.items() if value is not None})
+        _LOGGER.warning("matrix_e2ee verification %s", payload)
         self._fire_event(EVENT_VERIFICATION, payload)
 
     def _verification_expires_at(self) -> str:
@@ -800,6 +810,9 @@ class MatrixE2EEClient:
         """Start SAS with a known device. Does not mark the device trusted."""
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
+        _LOGGER.warning(
+            "matrix_e2ee start_verification user=%s device=%s", user_id, device_id
+        )
         device = self._lookup_device(nio, user_id, device_id)
         if device is None:
             self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
@@ -869,6 +882,7 @@ class MatrixE2EEClient:
         """Confirm SAS emojis match. This is the only path that verifies a device."""
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
+        _LOGGER.warning("matrix_e2ee confirm_verification txn=%s", transaction_id)
         if self._sas_is_timed_out(nio, transaction_id):
             await self._timeout_verification(nio, transaction_id)
             raise MatrixE2EEError(ERROR_VERIFICATION_TIMEOUT, "verification timed out")
@@ -917,6 +931,7 @@ class MatrixE2EEClient:
         """Cancel an in-progress SAS. Does not verify the device."""
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
+        _LOGGER.warning("matrix_e2ee cancel_verification txn=%s", transaction_id)
         sas = self._get_sas(nio, transaction_id)
         if sas is None:
             self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
@@ -1009,28 +1024,50 @@ class MatrixE2EEClient:
         if source.get("type") != VERIFICATION_REQUEST:
             return
         sender = source.get("sender")
+        content = (
+            source.get("content") if isinstance(source.get("content"), dict) else None
+        )
+        from_device = content.get("from_device") if content is not None else None
+        transaction_id = content.get("transaction_id") if content is not None else None
+        methods = content.get("methods") if content is not None else None
+        timestamp = content.get("timestamp") if content is not None else None
+        _LOGGER.warning(
+            "matrix_e2ee request received: sender=%s from_device=%s txn=%s "
+            "methods=%s ts=%s",
+            sender,
+            from_device,
+            transaction_id,
+            methods,
+            timestamp,
+        )
         if not isinstance(sender, str) or not sender:
+            _LOGGER.warning("matrix_e2ee request: missing sender; ignoring")
             return
         if not self._bootstrap_allowed(sender):
             _LOGGER.warning("matrix_e2ee request: sender %s not allowed; ignoring", sender)
             return
-        content = source.get("content")
         if not isinstance(content, dict):
+            _LOGGER.warning("matrix_e2ee request: content missing; ignoring")
             return
-        from_device = content.get("from_device")
-        transaction_id = content.get("transaction_id")
-        methods = content.get("methods")
         if not isinstance(from_device, str) or not from_device:
+            _LOGGER.warning("matrix_e2ee request: missing from_device; ignoring")
             return
         if not isinstance(transaction_id, str) or not transaction_id:
+            _LOGGER.warning("matrix_e2ee request: missing transaction_id; ignoring")
             return
         if (
             not isinstance(methods, list)
             or not all(isinstance(method, str) for method in methods)
             or SAS_METHOD_V1 not in methods
         ):
+            _LOGGER.warning(
+                "matrix_e2ee request: unsupported methods %s; ignoring", methods
+            )
             return
-        if not _request_timestamp_valid(content.get("timestamp")):
+        if not _request_timestamp_valid(timestamp):
+            _LOGGER.warning(
+                "matrix_e2ee request: invalid timestamp %s; ignoring", timestamp
+            )
             return
         await self._send_verification_ready(sender, from_device, transaction_id)
 
@@ -1078,6 +1115,13 @@ class MatrixE2EEClient:
         transaction_id = getattr(event, "transaction_id", None)
         if not isinstance(transaction_id, str) or not transaction_id:
             return
+        _LOGGER.warning(
+            "matrix_e2ee to_device kind=%s txn=%s sender=%s from_device=%s",
+            kind,
+            transaction_id,
+            getattr(event, "sender", None),
+            getattr(event, "from_device", None),
+        )
         if not self._bootstrap_allowed(getattr(event, "sender", None)):
             self._emit_error(
                 ERROR_VERIFICATION_PEER_DENIED, sender=getattr(event, "sender", None)
