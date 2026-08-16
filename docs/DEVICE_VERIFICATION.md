@@ -78,3 +78,64 @@
 ## 一句话总结
 
 每个设备——**包括机器人自己账号的另一台设备**——都必须「看 emoji → 你确认」才能被信任。没有自动信任。
+
+---
+
+## 附录：SAS 验证流程（源码级参考）
+
+给维护者/审查者的技术参考。事件顺序以 Matrix 规范 `m.key.verification.*`（to-device）为准。
+
+### 关键源码定位
+
+**matrix-nio 0.26.0**（`matrix-nio` 包）：
+
+| 文件 | 符号 | 职责 |
+|---|---|---|
+| `nio/crypto/olm_machine.py` | `Olm.handle_key_verification()` | SAS 状态机驱动：消费 `KeyVerificationStart/Accept/Key/Mac/Cancel`，负责建立 `Sas`、自动 share key、校验 MAC、`verify_device()` |
+| `nio/crypto/sas.py` | `Sas`（`SasState`） | 状态机 `created → started → accepted → key_received → mac_received → canceled`；`share_key()`/`get_mac()`/`accept_verification()`/`receive_key_event()`/`receive_mac_event()`/`accept_sas()`；`verified == (state == mac_received and sas_accepted)` |
+| `nio/client/async_client.py` | `start_key_verification()` / `accept_key_verification()` / `confirm_short_auth_string()` / `cancel_key_verification()` | 面向应用的 API，内部 `to_device()` 即时发送 |
+| `nio/client/async_client.py` | `sync_forever()` → `send_to_device_messages()` | 定时排空 `outgoing_to_device_messages` 队列 |
+
+**本集成**（`custom_components/matrix_e2ee/client.py`）：
+
+| 符号 | 职责 |
+|---|---|
+| `_query_own_device_keys()` | 登录/恢复后把机器人自己账号的设备 key 预取进 `device_store`（W1N-166 根因修复） |
+| `enable_verification_callbacks()` | 注册 `handle_to_device_event` 到 `add_to_device_callback` |
+| `handle_to_device_event()` | 集成回调，处理 `start` / `key` / `mac` / `cancel`（**不处理 `accept`**） |
+| `async_start_verification()` / `async_confirm_verification()` / `async_cancel_verification()` | 面向 HA 服务的三个入口 |
+
+### 方向 A：Element 发起（peer-initiated，bot 是接受方，`we_started_it=False`）
+
+| # | 事件 | 谁处理 | 动作 |
+|---|---|---|---|
+| 1 | `start`（Element → bot） | nio `handle_key_verification` | 查 `device_store`（靠 `_query_own_device_keys` 预热）；命中则 `Sas.from_key_verification_start` 建 `Sas(we_started_it=False, state=started)` 并注册 `key_verifications[txn]`；**miss 则丢弃该 start 并加 `users_for_key_query`** |
+| 2 | — | 集成 `handle_to_device_event("start")` | 校验 `emoji` 方法 → `accept_key_verification()` 发 `accept` |
+| 3 | `key`（Element → bot） | nio `handle_key_verification` | `receive_key_event()` 建立共享密钥；`not we_started_it` → 自动 `share_key()` 入队 |
+| 4 | — | `sync_forever` | `send_to_device_messages()` 发出 bot 的 `key` |
+| 5 | — | 集成 `handle_to_device_event("key")` | 发 `stage: sas`（含 emoji） |
+| 6 | 用户调 `confirm_verification` | 集成 `async_confirm_verification` | `confirm_short_auth_string()` → `accept_sas()` + `get_mac()`，发 bot 的 `mac` |
+| 7 | `mac`（Element → bot） | nio `handle_key_verification` | `receive_mac_event()` 校验，`verified` → `verify_device()` |
+| 8 | — | 集成 `handle_to_device_event("mac")` | `verified` 为真 → 发 `stage: done` |
+
+### 方向 B：机器人发起（bot-initiated，`we_started_it=True`）
+
+| # | 事件 | 谁处理 | 动作 |
+|---|---|---|---|
+| 1 | 用户调 `start_verification` | 集成 `async_start_verification` | `start_key_verification()` 建 `Sas(we_started_it=True, state=created)` 并发 `start` |
+| 2 | `accept`（Element → bot） | nio `handle_key_verification` | `receive_accept_event()` → 自动 `share_key()` 入队（initiator 先发 key） |
+| 3 | `key`（Element → bot） | nio `handle_key_verification` | `receive_key_event()`；`we_started_it` 为真 → 不再 share |
+| 4 | — | 集成 `handle_to_device_event("key")` | 发 `stage: sas` |
+| 5 | 用户调 `confirm_verification` | 集成 `async_confirm_verification` | `confirm_short_auth_string()` 发 `mac` |
+| 6 | `mac`（Element → bot） | nio `handle_key_verification` | `receive_mac_event()` → `verify_device()` |
+| 7 | — | 集成 `handle_to_device_event("mac")` | `verified` → 发 `stage: done` |
+
+### 关键事实
+
+- **集成不处理 `accept`**：`_verification_kind()` 只映射 `start/key/mac/cancel`，`accept` 由 nio 内部状态机自动处理（方向 B 的 #2）。
+- **key 的发送归 nio 管**：无论哪个方向，bot 的 `key` 都由 nio 内部 `share_key()` 入队、`sync_forever` 发出；集成**不应**手动 `share_key`。
+- **mac 只由 `confirm_verification` 服务发送一次**：`confirm_short_auth_string()` 内部已 `accept_sas()` + `get_mac()`。
+- **已知问题（见对应 issue）**：
+  - **W1N-169**：当前实现对 key 和 mac 各多发一次（方向 A 中集成手动 `share_key`、`mac` handler 里 `_try_confirm` 重复发 mac）。计划修复。
+  - **W1N-170**：bot 上线后才新增的设备，第一次 SAS 的 `start` 会被 nio 丢弃（"unknown device"），需重试一次。暂缓解决。
+  - **W1N-171**：SAS 全链路从未在真实 Matrix homeserver 上做过端到端验证（现有测试全用 FakeNio）。暂缓解决。
