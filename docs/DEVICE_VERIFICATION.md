@@ -71,7 +71,7 @@
 | 现象 | 含义 | 处理 |
 |---|---|---|
 | `verification_peer_denied` | 发起验证的不是机器人自己或 `allowed_users` | 检查是谁在发起 |
-| `verification_timeout` | 10 分钟没确认 | 重新发起一次验证 |
+| `verification_timeout` | 4 分钟没确认 | 重新发起一次验证 |
 | `fingerprint_mismatch` | 指纹对不上 | 停止，重新核对指纹，怀疑中间人 |
 | `invalid_transaction` | `transaction_id` 不对 | 从最新 `matrix_e2ee_verification` 事件里复制 |
 
@@ -100,7 +100,9 @@
 
 | 符号 | 职责 |
 |---|---|
-| `_query_own_device_keys()` | 登录/恢复后把机器人自己账号的设备 key 预取进 `device_store`（W1N-166 根因修复） |
+| `_query_device_keys()` | 把指定账号的设备 key 预取进 `device_store`（`_query_own_device_keys()` 是其特例，登录/恢复后查机器人自己账号） |
+| `_repair_dropped_start()` | 收到 `start` 但 nio 因设备未知已丢弃时：查 sender 的 key 后把同一个 `start` 重喂给 `nio.olm.handle_key_verification()` |
+| `_patch_nio_sas_timeout()` | monkeypatch `Sas.timed_out`，忽略 nio 失效的 60s 事件超时（`_last_event_time` 从不刷新），只保留 5min 总超时 |
 | `enable_verification_callbacks()` | 注册 `handle_to_device_event` 到 `add_to_device_callback` |
 | `handle_to_device_event()` | 集成回调，处理 `start` / `key` / `mac` / `cancel`（**不处理 `accept`**） |
 | `async_start_verification()` / `async_confirm_verification()` / `async_cancel_verification()` | 面向 HA 服务的三个入口 |
@@ -109,8 +111,8 @@
 
 | # | 事件 | 谁处理 | 动作 |
 |---|---|---|---|
-| 1 | `start`（Element → bot） | nio `handle_key_verification` | 查 `device_store`（靠 `_query_own_device_keys` 预热）；命中则 `Sas.from_key_verification_start` 建 `Sas(we_started_it=False, state=started)` 并注册 `key_verifications[txn]`；**miss 则丢弃该 start 并加 `users_for_key_query`** |
-| 2 | — | 集成 `handle_to_device_event("start")` | 校验 `emoji` 方法 → `accept_key_verification()` 发 `accept` |
+| 1 | `start`（Element → bot） | nio `handle_key_verification` | 查 `device_store`（靠 `_query_device_keys` 预热）；命中则 `Sas.from_key_verification_start` 建 `Sas(we_started_it=False, state=started)` 并注册 `key_verifications[txn]`；**miss 则丢弃该 start 并加 `users_for_key_query`** |
+| 2 | — | 集成 `handle_to_device_event("start")` | 若 nio 已丢弃该 start（设备未知），`_repair_dropped_start()` 查 key 后重喂 start 让 nio 建 SAS；随后 `accept_key_verification()` 发 `accept` |
 | 3 | `key`（Element → bot） | nio `handle_key_verification` | `receive_key_event()` 建立共享密钥；`not we_started_it` → 自动 `share_key()` 入队 |
 | 4 | — | `sync_forever` | `send_to_device_messages()` 发出 bot 的 `key` |
 | 5 | — | 集成 `handle_to_device_event("key")` | 发 `stage: sas`（含 emoji） |
@@ -137,5 +139,6 @@
 - **mac 只由 `confirm_verification` 服务发送一次**：`confirm_short_auth_string()` 内部已 `accept_sas()` + `get_mac()`。
 - **已知问题（见对应 issue）**：
   - **W1N-169**：~~当前实现对 key 和 mac 各多发一次（方向 A 中集成手动 `share_key`、`mac` handler 里 `_try_confirm` 重复发 mac）。~~ 已修复：key 由 nio 内部状态机在收到 peer key 时统一发送，mac 仅由 `confirm_verification` 发送。
-  - **W1N-170**：bot 上线后才新增的设备，第一次 SAS 的 `start` 会被 nio 丢弃（"unknown device"），需重试一次。暂缓解决。
+  - **W1N-170**：~~bot 上线后才新增的设备，第一次 SAS 的 `start` 会被 nio 丢弃（"unknown device"），需重试一次。~~ 已修复：`_repair_dropped_start()` 在收到未知设备的 `start` 时自动查 key 并重喂，无需手动重试。
+  - **W1N-172**：~~nio 0.26.0 的 `Sas._last_event_time` 从不刷新，SAS 在创建 60s 后必然超时（即使人还在比对 emoji）。~~ 已修复：`_patch_nio_sas_timeout()` monkeypatch `timed_out` 忽略失效的 60s 事件超时，只保留 5min 总超时；集成自己的超时对齐为 4min。
   - **W1N-171**：SAS 全链路从未在真实 Matrix homeserver 上做过端到端验证（现有测试全用 FakeNio）。暂缓解决。

@@ -78,7 +78,8 @@ class LocalProtocolError(Exception):
 class FakeOlm:
     """Presence-only stand-in: nio encrypts only when client.olm is set."""
 
-    def __init__(self):
+    def __init__(self, nio=None):
+        self.nio = nio
         self.account = SimpleNamespace(
             identity_keys={
                 "ed25519": "ED25519_PUB_KEY",
@@ -86,10 +87,33 @@ class FakeOlm:
             }
         )
         self.users_for_key_query: set[str] = set()
+        self.handle_key_verification_calls: list[object] = []
 
     def verify_device(self, device):
         device.verified = True
         return True
+
+    def handle_key_verification(self, event):
+        """Model nio's Olm.handle_key_verification for a `start` event.
+
+        A start whose peer device is unknown is dropped (and the sender queued for
+        a key query); a start whose device is known builds a SAS and registers it on
+        the client's key_verifications dict.
+        """
+        nio = self.nio
+        if nio is None:
+            return
+        self.handle_key_verification_calls.append(event)
+        if getattr(event, "type", None) != "m.key.verification.start":
+            return
+        sender = getattr(event, "sender", None)
+        from_device = getattr(event, "from_device", None)
+        txn = getattr(event, "transaction_id", None)
+        if from_device not in nio.device_store.get(sender, {}):
+            if sender:
+                self.users_for_key_query.add(sender)
+            return
+        nio.key_verifications[txn] = FakeSas(txn, sender, from_device, we_started_it=False)
 
 
 class FakeNio:
@@ -129,8 +153,9 @@ class FakeNio:
         self.send_error: Exception | None = None
         self.closed = False
         self.sync_calls = 0
-        self.olm: FakeOlm | None = FakeOlm()
+        self.olm: FakeOlm | None = FakeOlm(nio=self)
         self.keys_query_calls: list[str] = []
+        self.pending_devices: dict[str, list[FakeOlmDevice]] = {}
         self.rooms: dict[str, SimpleNamespace] = {}
         self.devices_trusted = False
         self.loaded_sync_token: str | None = None
@@ -189,7 +214,23 @@ class FakeNio:
 
     async def keys_query(self):
         self.keys_query_calls.append(self.user_id)
+        # Model nio's key query response populating the store for queried users.
+        if self.olm is None:
+            return object()
+        for user_id in list(self.olm.users_for_key_query):
+            for device in self.pending_devices.get(user_id, []):
+                self.device_store.setdefault(user_id, {})[device.device_id] = device
         return object()
+
+    def add_pending_device(self, user_id, device_id, verified=False):
+        """Declare a device the homeserver knows about but not yet in the store.
+
+        It is discovered into device_store on the next keys_query(), modeling a
+        device created after the bot logged in.
+        """
+        device = FakeOlmDevice(user_id, device_id, verified=verified)
+        self.pending_devices.setdefault(user_id, []).append(device)
+        return device
 
     async def room_send(
         self, room_id, message_type, content, ignore_unverified_devices=False

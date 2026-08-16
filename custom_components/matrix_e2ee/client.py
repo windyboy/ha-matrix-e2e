@@ -154,6 +154,39 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
+def _apply_sas_timeout_patch(sas_cls: Any, canceled_state: Any) -> None:
+    """Patch ``sas_cls.timed_out`` to ignore the 60 s event timeout (nio bug).
+
+    matrix-nio 0.26.0 assigns ``Sas._last_event_time`` once in ``__init__`` and
+    never refreshes it, so ``timed_out`` returns True exactly 60 s after creation
+    regardless of activity. Keep only ``_max_age`` (5 min) so the SAS survives a
+    slow human emoji comparison.
+    """
+    if getattr(sas_cls, "_matrix_e2ee_timeout_patched", False):
+        return
+
+    def timed_out(self: Any) -> bool:
+        if self.verified or self.canceled:
+            return False
+        if datetime.now() - self.creation_time >= self._max_age:
+            self.state = canceled_state
+            self.cancel_code, self.cancel_reason = self._timeout_error
+            return True
+        return False
+
+    sas_cls.timed_out = property(timed_out)
+    sas_cls._matrix_e2ee_timeout_patched = True
+
+
+def _patch_nio_sas_timeout() -> None:
+    """Work around nio 0.26.0 ``_last_event_time`` bug. No-op when nio is absent."""
+    try:
+        from nio.crypto.sas import Sas, SasState
+    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
+        return
+    _apply_sas_timeout_patch(Sas, SasState.canceled)
+
+
 def room_allowed(room_id: str, allowed_rooms: list[str]) -> bool:
     """Empty allowlist forbids every room."""
     return bool(allowed_rooms) and room_id in allowed_rooms
@@ -250,6 +283,7 @@ class MatrixE2EEClient:
         pickle_key: str,
         device_id: str | None,
     ) -> Any:
+        _patch_nio_sas_timeout()
         store = str(await asyncio.to_thread(ensure_store_dir, self._config_dir))
         factory = self._nio_client_factory
         if factory is not None:
@@ -392,29 +426,38 @@ class MatrixE2EEClient:
         if should_upload and upload is not None:
             await _maybe_await(upload())
 
-    async def _query_own_device_keys(self) -> None:
-        """Fetch the bot account's own device keys so inbound SAS can build a session."""
+    async def _query_device_keys(self, *user_ids: str) -> None:
+        """Fetch device keys for the given users so inbound SAS can build a session."""
         nio = self.nio
         if nio is None:
             return
         olm = getattr(nio, "olm", None)
-        user_id = getattr(nio, "user_id", None)
         query = getattr(olm, "users_for_key_query", None) if olm is not None else None
-        if query is None or not user_id:
+        if query is None:
             return
-        try:
-            query.add(user_id)
-        except (AttributeError, TypeError):
-            return
+        for user_id in user_ids:
+            if not user_id:
+                continue
+            try:
+                query.add(user_id)
+            except (AttributeError, TypeError):
+                continue
         keys_query = getattr(nio, "keys_query", None)
         if keys_query is None:
             return
         try:
             await _maybe_await(keys_query())
-        except Exception:  # noqa: BLE001 — key query must not block setup
+        except Exception:  # noqa: BLE001 — key query must not block verification
             _LOGGER.warning(
-                "matrix_e2ee failed to query own device keys; inbound SAS may fail"
+                "matrix_e2ee failed to query device keys; inbound SAS may fail"
             )
+
+    async def _query_own_device_keys(self) -> None:
+        """Fetch the bot account's own device keys so inbound SAS can build a session."""
+        nio = self.nio
+        user_id = getattr(nio, "user_id", None)
+        if user_id:
+            await self._query_device_keys(user_id)
 
     async def async_stop(self) -> None:
         """Cancel sync and close the nio client."""
@@ -920,6 +963,32 @@ class MatrixE2EEClient:
             return True
         return user_allowed(sender, self.allowed_users)
 
+    async def _repair_dropped_start(
+        self, nio: Any, event: Any, transaction_id: str
+    ) -> None:
+        """Recover a `start` that nio dropped because the peer device was unknown.
+
+        nio's `Olm.handle_key_verification` drops a `start` whose device is not yet
+        in `device_store` (it queues a key query and returns without building a SAS).
+        Here we query the sender's keys, then re-feed the same event into nio so it
+        can build the SAS now that the device is known.
+        """
+        sender = getattr(event, "sender", None)
+        from_device = getattr(event, "from_device", None)
+        if not sender or not from_device:
+            return
+        await self._query_device_keys(sender)
+        handle = getattr(getattr(nio, "olm", None), "handle_key_verification", None)
+        if handle is None:
+            return
+        try:
+            handle(event)
+        except Exception:  # noqa: BLE001 — fail closed; caller emits device_missing
+            _LOGGER.warning(
+                "matrix_e2ee failed to re-feed a dropped verification start for %s",
+                sender,
+            )
+
     async def handle_to_device_event(self, event: Any) -> None:
         """Drive inbound SAS. Accepting the protocol is not device trust."""
         if self._soft_logged_out:
@@ -956,6 +1025,12 @@ class MatrixE2EEClient:
             methods = getattr(event, "short_authentication_string", None) or []
             if "emoji" not in methods:
                 return
+            if self._get_sas(nio, transaction_id) is None:
+                await self._repair_dropped_start(nio, event, transaction_id)
+            sas = self._get_sas(nio, transaction_id)
+            if sas is None:
+                self._emit_error(ERROR_DEVICE_MISSING, transaction_id=transaction_id)
+                return
             accept = getattr(nio, "accept_key_verification", None)
             if accept is not None:
                 try:
@@ -963,7 +1038,6 @@ class MatrixE2EEClient:
                 except Exception:  # noqa: BLE001 — fail closed without trusting
                     self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
                     return
-            sas = self._get_sas(nio, transaction_id)
             self._mark_sas_started(transaction_id)
             user_id, device_id = self._sas_party(sas, event)
             self._emit_verification(

@@ -39,8 +39,9 @@ EVENT_FINGERPRINT = "matrix_e2ee_fingerprint"
 
 DEVICE_NAME = "Home Assistant matrix_e2ee"
 
-# Matrix interactive verification request timeout (Client-Server spec).
-VERIFICATION_TIMEOUT_SECONDS = 600
+# Integration-level SAS timeout. Must fire before nio's Sas._max_age (5 min),
+# so we emit a clear `verification_timeout` event instead of nio silently canceling.
+VERIFICATION_TIMEOUT_SECONDS = 240
 
 ERROR_SESSION_CORRUPT = "session_corrupt"
 ERROR_SESSION_MISSING = "session_missing"
