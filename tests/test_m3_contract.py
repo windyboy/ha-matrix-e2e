@@ -14,6 +14,7 @@ from custom_components.matrix_e2ee.client import (
     MatrixE2EEClient,
     MatrixE2EEError,
     _apply_sas_commitment_patch,
+    _apply_sas_emoji_patch,
     _apply_sas_timeout_patch,
     _sas_commitment,
 )
@@ -669,6 +670,28 @@ def test_sas_commitment_patch_fixes_hex_encoding():
     sas.commitment = _sas_commitment("PK", "START")
     assert sas._check_commitment("PK") is True
     assert sas._check_commitment("WRONG") is False
+
+
+def test_sas_emoji_patch_stops_double_conversion():
+    """Patch returns vodozemac's emoji indices directly, no re-slicing."""
+    indices = [5, 19, 28, 47, 14, 19, 53]
+
+    class SasLike:
+        emoji = [f"e{i}" for i in range(64)]
+
+        def __init__(self):
+            self.established_sas = SimpleNamespace(
+                bytes=lambda info: SimpleNamespace(emoji_indices=indices)
+            )
+
+    _apply_sas_emoji_patch(SasLike)
+
+    sas = SasLike()
+    assert sas._generate_emoji("info") == [f"e{i}" for i in indices]
+
+    # The old libolm bit-slicing would have produced different indices.
+    wrong = [f"e{i}" for i in [1, 17, 12, 28, 11, 48, 56]]
+    assert sas._generate_emoji("info") != wrong
 
 
 @pytest.mark.asyncio

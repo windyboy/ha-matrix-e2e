@@ -253,6 +253,36 @@ def _patch_nio_sas_commitment() -> None:
     _apply_sas_commitment_patch(Sas, Api.to_canonical_json)
 
 
+def _apply_sas_emoji_patch(sas_cls: Any) -> None:
+    """Stop nio 0.26.0 from re-slicing vodozemac's emoji indices.
+
+    vodozemac's ``EstablishedSas.bytes(info).emoji_indices`` already returns
+    the 7 final emoji indices (``[u8; 7]``, values 0-63). nio 0.26.0 still
+    runs the old libolm bit-slicing over them, treating the indices as raw
+    bytes, so the rendered emoji disagree with Element (``m.mismatched_sas``).
+    Return the indices directly.
+    """
+    if getattr(sas_cls, "_matrix_e2ee_emoji_patched", False):
+        return
+
+    def patched_generate_emoji(self, extra_info):
+        assert self.established_sas
+        indices = self.established_sas.bytes(extra_info).emoji_indices
+        return [self.emoji[index] for index in indices]
+
+    sas_cls._generate_emoji = patched_generate_emoji
+    sas_cls._matrix_e2ee_emoji_patched = True
+
+
+def _patch_nio_sas_emoji() -> None:
+    """Fix nio 0.26.0 SAS emoji rendering. No-op when nio is absent."""
+    try:
+        from nio.crypto.sas import Sas
+    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
+        return
+    _apply_sas_emoji_patch(Sas)
+
+
 def room_allowed(room_id: str, allowed_rooms: list[str]) -> bool:
     """Empty allowlist forbids every room."""
     return bool(allowed_rooms) and room_id in allowed_rooms
@@ -351,6 +381,7 @@ class MatrixE2EEClient:
     ) -> Any:
         _patch_nio_sas_timeout()
         _patch_nio_sas_commitment()
+        _patch_nio_sas_emoji()
         store = str(await asyncio.to_thread(ensure_store_dir, self._config_dir))
         factory = self._nio_client_factory
         if factory is not None:
