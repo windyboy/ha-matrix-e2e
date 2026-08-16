@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+import time
 
 import pytest
 
+from custom_components.matrix_e2ee import client as client_module
 from custom_components.matrix_e2ee.client import (
     MatrixE2EEClient,
     MatrixE2EEError,
@@ -62,6 +64,49 @@ class KeyVerificationCancel:
         self.transaction_id = transaction_id
         self.type = "m.key.verification.cancel"
         self.reason = "user cancelled"
+
+
+def _now_ms():
+    return int(time.time() * 1000)
+
+
+class VerificationRequest:
+    """Model nio's UnknownToDeviceEvent for an m.key.verification.request."""
+
+    def __init__(self, sender, from_device, transaction_id, methods=None, timestamp=None):
+        content = {
+            "from_device": from_device,
+            "transaction_id": transaction_id,
+            "methods": methods if methods is not None else ["m.sas.v1"],
+            "timestamp": timestamp if timestamp is not None else _now_ms(),
+        }
+        self.source = {
+            "type": "m.key.verification.request",
+            "sender": sender,
+            "content": content,
+        }
+        self.sender = sender
+        self.type = "m.key.verification.request"
+
+
+def _fake_to_device_message(type_, recipient, recipient_device, content):
+    """Stand-in for nio's ToDeviceMessage (tests do not install nio)."""
+    return SimpleNamespace(
+        type=type_,
+        recipient=recipient,
+        recipient_device=recipient_device,
+        content=content,
+        as_dict=lambda: {"messages": {recipient: {recipient_device: content}}},
+    )
+
+
+def _sent_readies(nio):
+    return [
+        s["message"]
+        for s in nio.to_device_sent
+        if s["op"] == "to_device"
+        and getattr(s["message"], "type", None) == "m.key.verification.ready"
+    ]
 
 
 def _factory_holder():
@@ -569,3 +614,144 @@ def test_sas_timeout_patch_ignores_event_timeout():
     sas.creation_time = datetime.now() - timedelta(minutes=6)
     assert sas.timed_out is True
     assert sas.state == "canceled"
+
+
+@pytest.mark.asyncio
+async def test_request_replies_ready_then_sas_flow(tmp_path, monkeypatch):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+
+    # Element sends m.key.verification.request; the bot replies ready.
+    await client._handle_verification_request(
+        VerificationRequest(USER, PEER_DEVICE, TXN)
+    )
+    readies = _sent_readies(nio)
+    assert len(readies) == 1
+    assert readies[0].recipient == USER
+    assert readies[0].recipient_device == PEER_DEVICE
+    assert readies[0].content == {
+        "from_device": "HABOTABC",
+        "methods": ["m.sas.v1"],
+        "transaction_id": TXN,
+    }
+    # The ready bridge must NOT create SAS state.
+    assert TXN not in nio.key_verifications
+
+    # Element then sends start; the existing SAS flow drives the rest.
+    nio.key_verifications[TXN] = FakeSas(TXN, USER, PEER_DEVICE, we_started_it=False)
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started"
+        for item in events
+    )
+
+    await client.handle_to_device_event(KeyVerificationKey(USER, TXN))
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "sas"
+        for item in events
+    )
+
+    await client.async_confirm_verification(TXN)
+    nio.receive_verification_mac(TXN)
+    await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done"
+        for item in events
+    )
+    assert nio.device_store[USER][PEER_DEVICE].verified is True
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_request_unknown_sender_ignored(tmp_path, monkeypatch):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    await client._handle_verification_request(
+        VerificationRequest("@stranger:example.org", PEER_DEVICE, TXN)
+    )
+    assert _sent_readies(nio) == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_request_unsupported_method_ignored(tmp_path, monkeypatch):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    await client._handle_verification_request(
+        VerificationRequest(USER, PEER_DEVICE, TXN, methods=["m.qr.scan.v1"])
+    )
+    assert _sent_readies(nio) == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_request_missing_transaction_id_ignored(tmp_path, monkeypatch):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    await client._handle_verification_request(VerificationRequest(USER, PEER_DEVICE, ""))
+    assert _sent_readies(nio) == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_request_missing_from_device_ignored(tmp_path, monkeypatch):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    await client._handle_verification_request(VerificationRequest(USER, "", TXN))
+    assert _sent_readies(nio) == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_request_expired_timestamp_ignored(tmp_path, monkeypatch):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    await client._handle_verification_request(
+        VerificationRequest(USER, PEER_DEVICE, TXN, timestamp=_now_ms() - 11 * 60 * 1000)
+    )
+    assert _sent_readies(nio) == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_request_future_timestamp_ignored(tmp_path, monkeypatch):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    await client._handle_verification_request(
+        VerificationRequest(USER, PEER_DEVICE, TXN, timestamp=_now_ms() + 6 * 60 * 1000)
+    )
+    assert _sent_readies(nio) == []
+    await client.async_stop()
+
+
+def test_request_timestamp_valid_rejects_non_int():
+    from custom_components.matrix_e2ee.client import _request_timestamp_valid
+
+    assert _request_timestamp_valid(_now_ms()) is True
+    assert _request_timestamp_valid(True) is False
+    assert _request_timestamp_valid(1.5) is False
+    assert _request_timestamp_valid("123") is False
+    assert _request_timestamp_valid(None) is False

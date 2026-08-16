@@ -35,6 +35,11 @@ from .const import (
     EVENT_ERROR,
     EVENT_VERIFICATION,
     NIO_DEFAULT_PICKLE_KEY,
+    SAS_METHOD_V1,
+    VERIFICATION_READY,
+    VERIFICATION_REQUEST,
+    VERIFICATION_REQUEST_MAX_AGE_MS,
+    VERIFICATION_REQUEST_MAX_FUTURE_MS,
     VERIFICATION_TIMEOUT_SECONDS,
 )
 from .storage import (
@@ -718,6 +723,7 @@ class MatrixE2EEClient:
         add = getattr(nio, "add_to_device_callback", None)
         if add is not None:
             add(self.handle_to_device_event, _key_verification_event_type())
+            add(self._handle_verification_request, _to_device_event_type())
         self._verification_enabled = True
 
     def _emit_verification(self, stage: str, **extra: Any) -> None:
@@ -989,6 +995,76 @@ class MatrixE2EEClient:
                 sender,
             )
 
+    async def _handle_verification_request(self, event: Any) -> None:
+        """Reply `ready` to an inbound m.key.verification.request (P0 bridge).
+
+        matrix-nio 0.26.0 has no request/ready handshake: it parses the request as
+        UnknownToDeviceEvent and never answers it, so Element gives up and cancels.
+        We answer `ready` here but do NOT create SAS state — the peer sends
+        m.key.verification.start next, which the existing SAS path drives.
+        """
+        source = getattr(event, "source", None)
+        if not isinstance(source, dict):
+            return
+        if source.get("type") != VERIFICATION_REQUEST:
+            return
+        sender = source.get("sender")
+        if not isinstance(sender, str) or not sender:
+            return
+        if not self._bootstrap_allowed(sender):
+            _LOGGER.warning("matrix_e2ee request: sender %s not allowed; ignoring", sender)
+            return
+        content = source.get("content")
+        if not isinstance(content, dict):
+            return
+        from_device = content.get("from_device")
+        transaction_id = content.get("transaction_id")
+        methods = content.get("methods")
+        if not isinstance(from_device, str) or not from_device:
+            return
+        if not isinstance(transaction_id, str) or not transaction_id:
+            return
+        if (
+            not isinstance(methods, list)
+            or not all(isinstance(method, str) for method in methods)
+            or SAS_METHOD_V1 not in methods
+        ):
+            return
+        if not _request_timestamp_valid(content.get("timestamp")):
+            return
+        await self._send_verification_ready(sender, from_device, transaction_id)
+
+    async def _send_verification_ready(
+        self, sender: str, from_device: str, transaction_id: str
+    ) -> None:
+        """Send m.key.verification.ready for an accepted verification request."""
+        nio = self.nio
+        if nio is None:
+            return
+        to_device = getattr(nio, "to_device", None)
+        if to_device is None:
+            return
+        own_device = getattr(nio, "device_id", None)
+        if not isinstance(own_device, str) or not own_device:
+            return
+        content = {
+            "from_device": own_device,
+            "methods": [SAS_METHOD_V1],
+            "transaction_id": transaction_id,
+        }
+        message = _to_device_message(VERIFICATION_READY, sender, from_device, content)
+        try:
+            await _maybe_await(to_device(message))
+        except Exception:  # noqa: BLE001 — never crash the to-device handler
+            _LOGGER.warning("matrix_e2ee failed to send verification ready")
+            return
+        _LOGGER.warning(
+            "matrix_e2ee request: replied ready to %s device %s txn=%s",
+            sender,
+            from_device,
+            transaction_id,
+        )
+
     async def handle_to_device_event(self, event: Any) -> None:
         """Drive inbound SAS. Accepting the protocol is not device trust."""
         if self._soft_logged_out:
@@ -1081,6 +1157,38 @@ def _key_verification_event_type() -> Any:
         return KeyVerificationEvent
     except Exception:  # noqa: BLE001 — tests may not install nio extras
         return None
+
+
+def _to_device_event_type() -> Any:
+    try:
+        from nio.events import ToDeviceEvent
+
+        return ToDeviceEvent
+    except Exception:  # noqa: BLE001 — tests may not install nio extras
+        return None
+
+
+def _to_device_message(
+    type_: str,
+    recipient: str,
+    recipient_device: str,
+    content: dict[str, Any],
+) -> Any:
+    """Lazy-load nio's ToDeviceMessage so tests need not install nio."""
+    from nio.event_builders import ToDeviceMessage
+
+    return ToDeviceMessage(type_, recipient, recipient_device, content)
+
+
+def _request_timestamp_valid(timestamp: Any) -> bool:
+    """Reject a request older than 10 min or more than 5 min in the future."""
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool):
+        return False
+    now_ms = int(time.time() * 1000)
+    return (
+        timestamp <= now_ms + VERIFICATION_REQUEST_MAX_FUTURE_MS
+        and timestamp >= now_ms - VERIFICATION_REQUEST_MAX_AGE_MS
+    )
 
 
 def _verification_kind(event: Any) -> str:
