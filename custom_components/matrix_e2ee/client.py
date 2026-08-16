@@ -26,6 +26,7 @@ from .const import (
     ERROR_REFRESH_TOKEN_UNSUPPORTED,
     ERROR_UNVERIFIED_DEVICE,
     ERROR_VERIFICATION_TIMEOUT,
+    ERROR_VERIFICATION_PEER_DENIED,
     EVENT_COMMAND,
     EVENT_ERROR,
     EVENT_VERIFICATION,
@@ -826,6 +827,15 @@ class MatrixE2EEClient:
             device_id=device_id,
         )
 
+    def _bootstrap_allowed(self, sender: str | None) -> bool:
+        """Only the bot's own account or allowlisted users may drive SAS."""
+        if not isinstance(sender, str) or not sender:
+            return False
+        session = self.session
+        if session is not None and sender == session.user_id:
+            return True
+        return user_allowed(sender, self.allowed_users)
+
     def _should_auto_confirm(self, sas: Any) -> bool:
         """Auto-confirm self-verification, or finish an already-confirmed SAS."""
         if bool(getattr(sas, "sas_accepted", False)):
@@ -860,6 +870,11 @@ class MatrixE2EEClient:
             return
         transaction_id = getattr(event, "transaction_id", None)
         if not isinstance(transaction_id, str) or not transaction_id:
+            return
+        if not self._bootstrap_allowed(getattr(event, "sender", None)):
+            self._emit_error(
+                ERROR_VERIFICATION_PEER_DENIED, sender=getattr(event, "sender", None)
+            )
             return
         if kind == "cancel":
             sas = self._get_sas(nio, transaction_id)

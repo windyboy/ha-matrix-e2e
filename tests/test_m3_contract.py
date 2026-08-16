@@ -13,6 +13,7 @@ from custom_components.matrix_e2ee.const import (
     ERROR_INVALID_TRANSACTION,
     ERROR_UNVERIFIED_DEVICE,
     ERROR_VERIFICATION_TIMEOUT,
+    ERROR_VERIFICATION_PEER_DENIED,
     EVENT_COMMAND,
     EVENT_ERROR,
     EVENT_VERIFICATION,
@@ -304,4 +305,30 @@ async def test_cross_user_mac_before_confirm_waits_for_admin(tmp_path):
     await client.async_confirm_verification(TXN)
     assert sas.verified is True
     assert nio.device_store[USER][PEER_DEVICE].verified is True
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_unknown_sender_verification_ignored(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    stranger = "@stranger:example.org"
+    nio.add_device(stranger, PEER_DEVICE, verified=False)
+    nio.key_verifications[TXN] = FakeSas(TXN, stranger, PEER_DEVICE)
+
+    await client.handle_to_device_event(
+        KeyVerificationStart(stranger, TXN, PEER_DEVICE)
+    )
+
+    assert all(
+        not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started")
+        for item in events
+    )
+    assert any(
+        item[0] == EVENT_ERROR and item[1]["code"] == ERROR_VERIFICATION_PEER_DENIED
+        for item in events
+    )
     await client.async_stop()
