@@ -332,3 +332,28 @@ async def test_unknown_sender_verification_ignored(tmp_path):
         for item in events
     )
     await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_safe_fingerprint_exposes_public_keys(tmp_path):
+    factory, _ = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    fp = client.safe_fingerprint()
+    assert fp is not None
+    assert fp["user_id"] == BOT
+    assert fp["ed25519"] == "ED25519_PUB_KEY"
+    assert fp["curve25519"] == "CURVE25519_PUB_KEY"
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_verify_device_marks_known_device(tmp_path):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    await client.async_verify_device(USER, PEER_DEVICE)
+    assert nio.device_store[USER][PEER_DEVICE].verified is True
+    await client.async_stop()

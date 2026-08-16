@@ -454,6 +454,22 @@ class MatrixE2EEClient:
             "store_sync_tokens": True,
         }
 
+    def safe_fingerprint(self) -> dict[str, Any] | None:
+        """Return the bot's own public device keys for one-sided verification."""
+        nio = self.nio
+        if nio is None:
+            return None
+        account = getattr(getattr(nio, "olm", None), "account", None)
+        identity_keys = getattr(account, "identity_keys", None)
+        if not isinstance(identity_keys, dict):
+            return None
+        return {
+            "user_id": getattr(nio, "user_id", None),
+            "device_id": getattr(nio, "device_id", None),
+            "ed25519": identity_keys.get("ed25519"),
+            "curve25519": identity_keys.get("curve25519"),
+        }
+
     async def async_reauthenticate(self, password: str) -> None:
         """Replace the access token after soft logout. Never creates a new device."""
         if not isinstance(password, str) or not password:
@@ -732,6 +748,26 @@ class MatrixE2EEClient:
             device_id=device_id,
         )
         return transaction_id
+
+    async def async_verify_device(self, user_id: str, device_id: str) -> None:
+        """Manually mark a known device verified (one-sided trust)."""
+        self._reject_if_soft_logged_out()
+        nio = self._require_nio()
+        device = self._lookup_device(nio, user_id, device_id)
+        if device is None:
+            self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
+            raise MatrixE2EEError(ERROR_DEVICE_MISSING, "device is not in the crypto store")
+        verify = getattr(getattr(nio, "olm", None), "verify_device", None) or getattr(
+            nio, "verify_device", None
+        )
+        if verify is None:
+            self._emit_error(
+                ERROR_ENCRYPTION_UNAVAILABLE, user_id=user_id, device_id=device_id
+            )
+            raise MatrixE2EEError(
+                ERROR_ENCRYPTION_UNAVAILABLE, "device verification is unavailable"
+            )
+        verify(device)
 
     async def async_confirm_verification(self, transaction_id: str) -> None:
         """Confirm SAS emojis match. This is the only path that verifies a device."""

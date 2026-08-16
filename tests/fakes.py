@@ -77,6 +77,18 @@ class LocalProtocolError(Exception):
 class FakeOlm:
     """Presence-only stand-in: nio encrypts only when client.olm is set."""
 
+    def __init__(self):
+        self.account = SimpleNamespace(
+            identity_keys={
+                "ed25519": "ED25519_PUB_KEY",
+                "curve25519": "CURVE25519_PUB_KEY",
+            }
+        )
+
+    def verify_device(self, device):
+        device.verified = True
+        return True
+
 
 class FakeNio:
     def __init__(
