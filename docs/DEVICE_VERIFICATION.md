@@ -33,10 +33,12 @@
 2. 找到 `BOT_SERVER_01`（通常是未验证的灰色盾牌）。
 3. 点它 → 验证。
 
+整个流程由 **Element 发起**，HA 这端不需要调用 `matrix_e2ee.start_verification`。
+
 ## 第 3 步：比对 emoji
 
 1. Element 显示一串 emoji（比如 🐶 🌙 🔑）。
-2. 回到 Home Assistant → 开发者工具 → 事件，监听 `matrix_e2ee_verification`，找到 `stage: sas`，里面的 `emojis` 就是 HA 这一端显示的 emoji。
+2. 回到 Home Assistant → 开发者工具 → 事件，监听 `matrix_e2ee_verification`。会依次看到 `stage: started`（验证已开始），然后是 `stage: sas`（进入比对），其中的 `emojis` 就是 HA 这一端显示的 emoji。
 3. **逐个比对两端 emoji 是否完全一致。**
 
 ## 第 4 步：确认
@@ -63,6 +65,8 @@
 注意：这条路不经过 emoji 比对，安全依赖你亲自在可信渠道比对指纹。
 
 ## 出错怎么办
+
+如果事件出现 `stage: canceled`：这次验证已作废（transaction 失效），**不要**调用 `confirm_verification`，回到第 2 步从 Element 重新发起。
 
 | 现象 | 含义 | 处理 |
 |---|---|---|
