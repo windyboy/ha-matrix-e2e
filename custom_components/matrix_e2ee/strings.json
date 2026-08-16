@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Matrix",
+        "description": "Log in with a dedicated non-admin Matrix bot account. The password is used only to test the connection; it is never stored.",
+        "data": {
+          "homeserver": "Homeserver URL",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reauth": {
+        "title": "Re-authenticate",
+        "description": "The access token was soft-logged-out. Re-enter the bot account password to replace it. The device identity and crypto store are kept.",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure",
+        "description": "Change the homeserver URL. The username is read-only.",
+        "data": {
+          "homeserver": "Homeserver URL"
+        }
+      },
+      "init": {
+        "title": "Options",
+        "description": "Edit access controls and the command prefix.",
+        "data": {
+          "allowed_rooms": "Allowed rooms",
+          "allowed_users": "Allowed users",
+          "command_prefix": "Command prefix"
+        },
+        "data_description": {
+          "allowed_rooms": "Comma-separated room IDs. Empty means no send and no inbound commands.",
+          "allowed_users": "Comma-separated user IDs. Empty means no inbound commands.",
+          "command_prefix": "Single character prefix that starts a command."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured%]",
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+      "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
+      "unknown": "Unknown error",
+      "login_failed": "Login failed"
+    }
+  }
+}
