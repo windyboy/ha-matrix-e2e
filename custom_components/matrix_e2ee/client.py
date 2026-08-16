@@ -244,13 +244,13 @@ class MatrixE2EEClient:
         self._monotonic = time.monotonic
         self._soft_logged_out = False
 
-    def _make_nio(
+    async def _make_nio(
         self,
         *,
         pickle_key: str,
         device_id: str | None,
     ) -> Any:
-        store = str(ensure_store_dir(self._config_dir))
+        store = str(await asyncio.to_thread(ensure_store_dir, self._config_dir))
         factory = self._nio_client_factory
         if factory is not None:
             return factory(
@@ -287,7 +287,7 @@ class MatrixE2EEClient:
     async def async_start(self) -> None:
         """Create or restore an E2EE-capable Matrix device, then connect."""
         try:
-            existing = load_session(self._config_dir)
+            existing = await asyncio.to_thread(load_session, self._config_dir)
         except SessionError as err:
             raise MatrixE2EEError(err.code, str(err)) from err
 
@@ -311,7 +311,7 @@ class MatrixE2EEClient:
                 ERROR_LOGIN_FAILED,
                 "refusing to use the SDK default pickle key",
             )
-        nio = self._make_nio(pickle_key=pickle_key, device_id=None)
+        nio = await self._make_nio(pickle_key=pickle_key, device_id=None)
         self.nio = nio
         response = await nio.login(self._password, device_name=DEVICE_NAME)
         if _is_error_response(response):
@@ -333,7 +333,7 @@ class MatrixE2EEClient:
             access_token=nio.access_token,
             pickle_key=pickle_key,
         )
-        atomic_save_session(self._config_dir, session)
+        await asyncio.to_thread(atomic_save_session, self._config_dir, session)
         self.session = session
         self._first_setup = True
         self._install_secret_filter()
@@ -346,7 +346,7 @@ class MatrixE2EEClient:
                 ERROR_RESTORE_FAILED,
                 "refusing to restore a session that used the SDK default pickle key",
             )
-        nio = self._make_nio(
+        nio = await self._make_nio(
             pickle_key=session.pickle_key,
             device_id=session.device_id,
         )
@@ -558,7 +558,7 @@ class MatrixE2EEClient:
             self._emit_error(ERROR_LOGIN_FAILED)
             raise MatrixE2EEError(ERROR_LOGIN_FAILED, "reauthenticate returned no access token")
         new_session = session.with_access_token(nio.access_token)
-        atomic_save_session(self._config_dir, new_session)
+        await asyncio.to_thread(atomic_save_session, self._config_dir, new_session)
         self.session = new_session
         self._soft_logged_out = False
         self._install_secret_filter()
