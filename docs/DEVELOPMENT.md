@@ -5,23 +5,24 @@ This repository is a Home Assistant custom integration (`custom_components/matri
 ## Tests
 
 - Use **pytest** with a mocked `nio.AsyncClient` and a temporary Home Assistant config/storage directory.
-- Do **not** add `pytest-homeassistant-custom-component` unless that is an explicit later decision.
+- Config Flow / Options Flow / reauth / entry lifecycle tests use the Home Assistant test harness (`pytest-homeassistant-custom-component` + `homeassistant`).
 - Do **not** use a real Matrix homeserver, access token, pickle key, crypto store, or SAS transcript in tests or in git.
 
 From the repository root:
 
 ```bash
-python3 -m pip install -r requirements-dev.txt
-python3 -m pytest
+uv run pytest
 ```
 
-These tests mock `nio.AsyncClient` and do not install Home Assistant or `pytest-homeassistant-custom-component`. If a required Home Assistant test API is missing for a later check, stop and ask. Do not invent a workaround or install packages into Home Assistant OS.
+`uv` manages the project's `.venv` (deps in `requirements-dev.txt`). A plain venv also works: `.venv/bin/python -m pytest`.
 
-M1 contract: `tests/test_m1_contract.py`. M2 contract: `tests/test_m2_contract.py`. M3 contract: `tests/test_m3_contract.py`. M4 contract: `tests/test_m4_contract.py`. Shared fake client: `tests/fakes.py`.
+These tests mock `nio.AsyncClient`; the flow/lifecycle tests use the Home Assistant test harness with a mocked nio client injected via the module-level `_NIO_CLIENT_FACTORY`. Do not invent a workaround or install packages into Home Assistant OS.
+
+M1 contract: `tests/test_m1_contract.py`. M2 contract: `tests/test_m2_contract.py`. M3 contract: `tests/test_m3_contract.py`. M4 contract: `tests/test_m4_contract.py`. Config Flow: `tests/test_config_flow.py`, `tests/test_reauth.py`, `tests/test_options_flow.py`, `tests/test_import.py`, `tests/test_entry_lifecycle.py`. Shared fake client: `tests/fakes.py`.
 
 ## Local layout
 
-Copy `custom_components/matrix_e2ee` into `<config>/custom_components/matrix_e2ee` on a Home Assistant instance. Configure YAML only (no Config Flow in M1–M4).
+Copy `custom_components/matrix_e2ee` into `<config>/custom_components/matrix_e2ee` on a Home Assistant instance. Configure via the Config Flow UI (**Settings → Devices & Services → Add Integration → Matrix E2EE**). A leftover `matrix_e2ee:` YAML block is imported into a config entry on startup.
 
 Session and crypto store are written under `<config>/.storage/` at runtime. Those paths are gitignored and must stay on the same persistent volume as Home Assistant.
 

@@ -5,11 +5,11 @@ Home Assistant **custom** integration that runs a dedicated Matrix bot with a pe
 - Unique domain: `matrix_e2ee`
 - Does **not** override Home Assistant’s built-in `matrix` integration
 - Python, `matrix-nio[e2e]==0.26.0` with its E2EE extras (`vodozemac`, `peewee`, `cachetools`, `atomicwrites`) declared explicitly in `manifest.json`
-- YAML setup only (no Config Flow, not in HACS)
+- Config Flow (UI) setup; not in HACS
 
 ## Installation
 
-This is a **manual** custom integration. There is no HACS listing and no Config Flow.
+This is a **manual** custom integration (not in HACS). It is configured through Home Assistant's Config Flow (UI), not YAML.
 
 Use a dedicated **non-admin** Matrix bot account. Do not run Home Assistant’s built-in `matrix` integration and `matrix_e2ee` on the same bot account. Read the [security warning](#security-warning) before enabling it.
 
@@ -29,10 +29,10 @@ mkdir -p /config/custom_components
 cp -a custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
 
-**From git** (replace `v0.1.1` with the [release tag](https://github.com/windyboy/ha-matrix-e2e/releases) you want):
+**From git** (replace `v0.2.0` with the [release tag](https://github.com/windyboy/ha-matrix-e2e/releases) you want):
 
 ```bash
-git clone --depth 1 --branch v0.1.1 https://github.com/windyboy/ha-matrix-e2e.git /tmp/ha-matrix-e2e
+git clone --depth 1 --branch v0.2.0 https://github.com/windyboy/ha-matrix-e2e.git /tmp/ha-matrix-e2e
 mkdir -p /config/custom_components
 cp -a /tmp/ha-matrix-e2e/custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
@@ -43,29 +43,33 @@ The installed tree must be:
 <config>/custom_components/matrix_e2ee/manifest.json
 <config>/custom_components/matrix_e2ee/__init__.py
 <config>/custom_components/matrix_e2ee/client.py
+<config>/custom_components/matrix_e2ee/config_flow.py
 <config>/custom_components/matrix_e2ee/const.py
 <config>/custom_components/matrix_e2ee/storage.py
 <config>/custom_components/matrix_e2ee/services.yaml
+<config>/custom_components/matrix_e2ee/strings.json
+<config>/custom_components/matrix_e2ee/translations/en.json
+<config>/custom_components/matrix_e2ee/translations/zh-Hans.json
 ```
 
-### 2. Add YAML and the bot password
+### 2. Add the integration in the UI
 
-Put the password in `secrets.yaml`, not in git:
+1. Restart Home Assistant once after copying the files (so the integration is discovered).
+2. **Settings → Devices & Services → Add Integration → Matrix E2EE**.
+3. Enter the **homeserver URL**, the bot **username**, and the **password**. The password is used only to log in and test the connection; it is never stored.
+4. On first login the integration creates the bot device and writes its crypto store. Later restarts restore the same device without any password.
 
-```yaml
-# secrets.yaml
-matrix_e2ee_password: "your-bot-password"
-```
+The password is required only on the very first login, when no session file exists yet. It is not saved to the config entry.
 
-Then add the block in `configuration.yaml` (see [Configuration](#configuration-yaml)). Password is required only on first login, when no session file exists yet.
+### 3. Migrating from the old YAML setup
 
-### 3. Restart Home Assistant
+If a `matrix_e2ee:` block is still present in `configuration.yaml`, Home Assistant imports it into a config entry on startup. The existing `.storage/matrix_e2ee_session.json` and `.storage/matrix_e2ee_store/` are reused — the device is **not** recreated. Once the import has created the entry, you can remove the YAML block.
 
-1. Developer Tools → YAML → Check configuration.
-2. Restart Home Assistant.
-3. On first load, Home Assistant installs `matrix-nio[e2e]==0.26.0` and its explicit E2EE dependencies (`vodozemac`, `peewee`, `cachetools`, `atomicwrites`) from `manifest.json`. The E2EE deps are listed explicitly because Home Assistant's requirement manager drops the `[e2e]` extra and would otherwise skip them. If any requirement fails to install, setup fails closed. Do not work around it with OS-level `pip` on Home Assistant OS.
+### 4. Dependencies
 
-After a successful first start, HA writes:
+On first load, Home Assistant installs `matrix-nio[e2e]==0.26.0` and its explicit E2EE dependencies (`vodozemac`, `peewee`, `cachetools`, `atomicwrites`) from `manifest.json`. The E2EE deps are listed explicitly because Home Assistant's requirement manager drops the `[e2e]` extra and would otherwise skip them. If any requirement fails to install, setup fails closed. Do not work around it with OS-level `pip` on Home Assistant OS.
+
+After a successful first setup, HA writes:
 
 - `<config>/.storage/matrix_e2ee_session.json`
 - `<config>/.storage/matrix_e2ee_store/`
@@ -97,23 +101,16 @@ Rules that this project will not violate:
 
 Do not claim production E2EE support until a real Element/homeserver SAS has been confirmed on a deployment.
 
-## Configuration (YAML)
+## Configuration (UI)
 
-Password is required only when no session exists. After first successful login, the session is written atomically; later starts restore the same Matrix device.
+All configuration is done through the Config Flow:
 
-```yaml
-matrix_e2ee:
-  homeserver: https://matrix.example.org
-  username: "@ha-bot:example.org"
-  password: !secret matrix_e2ee_password
-  allowed_rooms:
-    - "!roomid:example.org"
-  allowed_users:
-    - "@admin:example.org"
-  command_prefix: "!"
-```
+- **homeserver** and **username** are entered when the integration is added. The username is read-only afterwards; the homeserver can be changed via **Reconfigure**.
+- **allowed_rooms**, **allowed_users**, and **command_prefix** are edited via **Configure** (Options). Changing them reloads the integration and reuses the existing crypto store.
 
 Empty `allowed_rooms`: no send, no inbound commands. Empty `allowed_users`: no inbound commands; send to allowed rooms is still permitted.
+
+The old YAML block is no longer required. If a `matrix_e2ee:` block remains in `configuration.yaml`, it is imported into a config entry on startup (see [Migrating from the old YAML setup](#3-migrating-from-the-old-yaml-setup)).
 
 ## Services and events (M1–M5)
 
@@ -157,7 +154,7 @@ Every device — including another device of the bot's own account — requires 
 
 Session JSON and the crypto store stay on the Home Assistant host. They are gitignored. This is a public repository: never commit tokens, pickle keys, passwords, or store files.
 
-Safe diagnostics (no token, pickle key, password, or message body) are the fields below. There is no Config Entry diagnostics platform in v1.
+Safe diagnostics (no token, pickle key, password, or message body) are the fields below. There is no Config Entry diagnostics platform in v0.2.
 
 - `user_id`
 - `device_id`
@@ -169,7 +166,9 @@ Safe diagnostics (no token, pickle key, password, or message body) are the field
 
 ### Soft logout (`matrix_e2ee_error` code `soft_logout`)
 
-The access token is invalid, but the homeserver still allows the same device to sign in again. The integration **keeps** `.storage/matrix_e2ee_store/` and the existing `device_id`. Setup still loads the client and registers services (including `reauthenticate`). Send, inbound commands, SAS, and sync stay blocked until reauthentication succeeds.
+The access token is invalid, but the homeserver still allows the same device to sign in again. The integration **keeps** `.storage/matrix_e2ee_store/` and the existing `device_id`. Send, inbound commands, SAS, and sync stay blocked until reauthentication succeeds.
+
+At setup time a soft logout shows a **Re-authenticate** prompt on the integration (the native reauth flow). At runtime, reauthenticate via the service:
 
 1. Call `matrix_e2ee.reauthenticate` with the bot account password (Developer Tools → Services, or an automation). Provide the password only to this service.
 2. On success the session file is rewritten with a **new access token only**. `device_id` and `pickle_key` are unchanged. The crypto store is reused.
@@ -183,7 +182,7 @@ The token is invalid and this is **not** a soft logout. Setup **fails**. Do **no
 
 1. Revoke the old device on the homeserver if you still can.
 2. Delete `<config>/.storage/matrix_e2ee_session.json` **and** `<config>/.storage/matrix_e2ee_store/`.
-3. Restart Home Assistant with `password` in YAML so first login creates a **new** device.
+3. Delete the integration in **Settings → Devices & Services**, then add it again through the UI so first login creates a **new** device.
 4. Run SAS again (`start_verification` / `confirm_verification`). Old history cannot be decrypted.
 
 ### Crypto store missing (`store_missing`)
@@ -199,7 +198,7 @@ Treat this as a new device. The session JSON is not enough to recover Megolm his
 
 ### Short-lived / refresh tokens (`refresh_token_unsupported`)
 
-v1 does not rotate refresh tokens. If login or `reauthenticate` would receive a refresh token or a short-lived access token (`expires_in_ms`), the integration refuses to persist the session. Use a long-lived access token (standard password login without token refresh).
+This integration does not rotate refresh tokens. If login or `reauthenticate` would receive a refresh token or a short-lived access token (`expires_in_ms`), the integration refuses to persist the session. Use a long-lived access token (standard password login without token refresh).
 
 ## Roadmap
 
@@ -209,6 +208,7 @@ v1 does not rotate refresh tokens. If login or `reauthenticate` would receive a 
 | **M2** | E2EE lifecycle: first login writes a full crypto device, restart restores the same device, encrypted text path, fail-closed unverified send/commands | Released ([#4](https://github.com/windyboy/ha-matrix-e2e/pull/4)) |
 | **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Released ([#5](https://github.com/windyboy/ha-matrix-e2e/pull/5)) |
 | **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Released ([#6](https://github.com/windyboy/ha-matrix-e2e/pull/6)) |
+| **M5** | Config Flow migration: UI setup, options / reconfigure / reauth flows, YAML import, tests | Released (v0.2.0) |
 
 M1 acceptance uses unencrypted test rooms. The first successful login still creates a full E2EE-capable Matrix device so M2 does not “upgrade” a non-crypto device.
 
