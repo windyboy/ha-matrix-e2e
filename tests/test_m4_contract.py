@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -277,6 +278,17 @@ async def test_reauthenticate_rejected_when_not_soft_logged_out(tmp_path):
         await client.async_reauthenticate(REAUTH_PASSWORD)
     assert err.value.code == ERROR_INVALID_STATE
     await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_stop_handles_cancelled_error(tmp_path):
+    await _seed_session(tmp_path)
+    factory, _ = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory, password=None)
+    await client.async_start()
+    client._sync_task = asyncio.create_task(asyncio.sleep(3600))
+    await client.async_stop()
+    assert client.nio is None
 
 
 def test_session_with_access_token_keeps_device_and_pickle():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -15,6 +16,7 @@ from .const import (
     ERROR_DEVICE_MISMATCH,
     ERROR_DEVICE_MISSING,
     ERROR_ENCRYPTION_UNAVAILABLE,
+    ERROR_FINGERPRINT_MISMATCH,
     ERROR_INVALID_TRANSACTION,
     ERROR_LOGIN_FAILED,
     ERROR_PASSWORD_REQUIRED,
@@ -397,6 +399,8 @@ class MatrixE2EEClient:
             task.cancel()
             try:
                 await task
+            except asyncio.CancelledError:  # noqa: BLE001 — expected on cancel
+                pass
             except Exception:  # noqa: BLE001 — shutdown must not raise
                 pass
         await self._close_nio()
@@ -762,14 +766,24 @@ class MatrixE2EEClient:
         )
         return transaction_id
 
-    async def async_verify_device(self, user_id: str, device_id: str) -> None:
-        """Manually mark a known device verified (one-sided trust)."""
+    async def async_verify_device_by_fingerprint(
+        self, user_id: str, device_id: str, ed25519: str
+    ) -> None:
+        """Trust a device only when its ed25519 fingerprint matches (one-sided local trust)."""
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
         device = self._lookup_device(nio, user_id, device_id)
         if device is None:
             self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
             raise MatrixE2EEError(ERROR_DEVICE_MISSING, "device is not in the crypto store")
+        actual = getattr(device, "ed25519", None)
+        if not isinstance(actual, str) or actual.strip().casefold() != ed25519.strip().casefold():
+            self._emit_error(
+                ERROR_FINGERPRINT_MISMATCH, user_id=user_id, device_id=device_id
+            )
+            raise MatrixE2EEError(
+                ERROR_FINGERPRINT_MISMATCH, "ed25519 fingerprint does not match"
+            )
         verify = getattr(getattr(nio, "olm", None), "verify_device", None) or getattr(
             nio, "verify_device", None
         )
@@ -886,18 +900,8 @@ class MatrixE2EEClient:
             return True
         return user_allowed(sender, self.allowed_users)
 
-    def _should_auto_confirm(self, sas: Any) -> bool:
-        """Auto-confirm self-verification, or finish an already-confirmed SAS."""
-        if bool(getattr(sas, "sas_accepted", False)):
-            return True
-        session = self.session
-        if session is None:
-            return False
-        other_user = getattr(getattr(sas, "other_olm_device", None), "user_id", None)
-        return other_user is not None and other_user == session.user_id
-
     async def _try_confirm(self, nio: Any, transaction_id: str) -> None:
-        """Send our MAC and verify the device once the SAS is accepted."""
+        """Finish an admin-confirmed SAS: send our MAC and verify the device."""
         confirm = getattr(nio, "confirm_short_auth_string", None) or getattr(
             nio, "confirm_key_verification", None
         )
@@ -985,7 +989,7 @@ class MatrixE2EEClient:
             )
             return
         if kind == "mac":
-            if self._should_auto_confirm(sas):
+            if bool(getattr(sas, "sas_accepted", False)):
                 await self._try_confirm(nio, transaction_id)
             if bool(getattr(sas, "verified", False)):
                 self._sas_started_at.pop(transaction_id, None)

@@ -10,16 +10,16 @@
 
 ## Device verification (two paths)
 
-### 1. SAS auto-completion (mutual)
+### 1. SAS (mutual, manual confirmation)
 
 1. Log in to the bot account in Element. This device becomes the admin/bootstrap device.
 2. Bootstrap the bot's cross-signing identity in Element.
 3. Start the server bot; it creates its device (`BOT_SERVER_01`) and uploads device keys.
 4. In Element, open the bot account's Sessions and verify `BOT_SERVER_01`.
-5. The integration auto-completes the SAS handshake when the initiator is the bot's own account; confirm the emoji match in Element.
+5. Compare the SAS emojis on both sides, then call `matrix_e2ee.confirm_verification` from Home Assistant. Only this explicit step marks the device verified.
 6. Element cross-signs `BOT_SERVER_01`, which then shows as verified.
 
-Only the bot's own account (`sender == session.user_id`) or users in `allowed_users` may initiate SAS. Everything else is rejected with error code `verification_peer_denied`.
+There is no auto-confirm. A second device of the bot's own account is not trusted just because it shares the account; it must go through the same manual emoji comparison and explicit `confirm_verification`. Only the bot's own account or users in `allowed_users` may initiate SAS. Everything else is rejected with error code `verification_peer_denied`.
 
 ### 2. One-sided fingerprint (fallback)
 
@@ -27,7 +27,7 @@ Only the bot's own account (`sender == session.user_id`) or users in `allowed_us
 2. In Element, open the bot user's sessions and use "Manually verify by text".
 3. Compare the session key with the fingerprint. This trusts the bot from Element's side only.
 
-To trust a device from the bot's side without SAS, call `matrix_e2ee.verify_device`.
+To trust a device from the bot's side without SAS, call `matrix_e2ee.verify_device_by_fingerprint` with the device's `ed25519` key. It is trusted only when the fingerprint matches exactly (error `fingerprint_mismatch` otherwise). This is local trust, not SAS or cross-signing.
 
 ## Why not cross-signing self-sign?
 

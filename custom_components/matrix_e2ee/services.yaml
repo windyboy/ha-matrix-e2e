@@ -60,9 +60,9 @@ cancel_verification:
       selector:
         text:
 
-verify_device:
-  name: Verify device
-  description: Manually mark a device in the crypto store as verified (one-sided trust). Admin only.
+verify_device_by_fingerprint:
+  name: Manually trust device by fingerprint
+  description: Trust a device only if its ed25519 fingerprint matches the crypto store exactly (one-sided local trust, not SAS). Admin only.
   fields:
     user_id:
       name: User ID
@@ -76,6 +76,13 @@ verify_device:
       description: Matrix device ID.
       required: true
       example: "ELEMENTABC"
+      selector:
+        text:
+    ed25519:
+      name: Ed25519 fingerprint
+      description: The device's ed25519 key, compared against the crypto store before trusting.
+      required: true
+      example: "base64-ed25519-key"
       selector:
         text:
 

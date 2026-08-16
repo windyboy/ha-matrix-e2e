@@ -6,6 +6,7 @@ import logging
 
 from .const import (
     ATTR_DEVICE_ID,
+    ATTR_ED25519,
     ATTR_MESSAGE,
     ATTR_PASSWORD,
     ATTR_ROOM_ID,
@@ -28,7 +29,7 @@ from .const import (
     SERVICE_REAUTHENTICATE,
     SERVICE_SEND_MESSAGE,
     SERVICE_START_VERIFICATION,
-    SERVICE_VERIFY_DEVICE,
+    SERVICE_VERIFY_DEVICE_BY_FINGERPRINT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ try:
     from homeassistant.const import EVENT_HOMEASSISTANT_STOP
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers import config_validation as cv
+    from homeassistant.helpers.service import async_register_admin_service
 
     from .client import MatrixE2EEClient, MatrixE2EEError
 except ImportError:  # pragma: no cover - unit tests without Home Assistant
@@ -80,6 +82,13 @@ else:
         {
             vol.Required(ATTR_USER_ID): cv.string,
             vol.Required(ATTR_DEVICE_ID): cv.string,
+        }
+    )
+    VERIFY_DEVICE_SCHEMA = vol.Schema(
+        {
+            vol.Required(ATTR_USER_ID): cv.string,
+            vol.Required(ATTR_DEVICE_ID): cv.string,
+            vol.Required(ATTR_ED25519): cv.string,
         }
     )
     TRANSACTION_SCHEMA = vol.Schema({vol.Required(ATTR_TRANSACTION_ID): cv.string})
@@ -153,19 +162,22 @@ else:
                 _LOGGER.error("matrix_e2ee cancel_verification failed: %s", err.code)
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
 
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             SERVICE_START_VERIFICATION,
             _handle_start_verification,
             schema=START_VERIFICATION_SCHEMA,
         )
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             SERVICE_CONFIRM_VERIFICATION,
             _handle_confirm_verification,
             schema=TRANSACTION_SCHEMA,
         )
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             SERVICE_CANCEL_VERIFICATION,
             _handle_cancel_verification,
@@ -179,20 +191,25 @@ else:
             DOMAIN, SERVICE_GET_FINGERPRINT, _handle_get_fingerprint
         )
 
-        async def _handle_verify_device(call) -> None:
+        async def _handle_verify_device_by_fingerprint(call) -> None:
             try:
-                await client.async_verify_device(
-                    call.data[ATTR_USER_ID], call.data[ATTR_DEVICE_ID]
+                await client.async_verify_device_by_fingerprint(
+                    call.data[ATTR_USER_ID],
+                    call.data[ATTR_DEVICE_ID],
+                    call.data[ATTR_ED25519],
                 )
             except MatrixE2EEError as err:
-                _LOGGER.error("matrix_e2ee verify_device failed: %s", err.code)
+                _LOGGER.error(
+                    "matrix_e2ee verify_device_by_fingerprint failed: %s", err.code
+                )
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
 
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
-            SERVICE_VERIFY_DEVICE,
-            _handle_verify_device,
-            schema=START_VERIFICATION_SCHEMA,
+            SERVICE_VERIFY_DEVICE_BY_FINGERPRINT,
+            _handle_verify_device_by_fingerprint,
+            schema=VERIFY_DEVICE_SCHEMA,
         )
 
         async def _handle_reauthenticate(call) -> None:
@@ -206,7 +223,8 @@ else:
             if task is None or getattr(task, "done", lambda: True)():
                 client._sync_task = hass.async_create_task(client.async_sync_loop())
 
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             SERVICE_REAUTHENTICATE,
             _handle_reauthenticate,
