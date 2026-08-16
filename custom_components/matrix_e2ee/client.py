@@ -283,6 +283,121 @@ def _patch_nio_sas_emoji() -> None:
     _apply_sas_emoji_patch(Sas)
 
 
+def _apply_sas_mac_patch(
+    sas_cls: Any,
+    to_device_message: Any,
+    local_protocol_error: Any,
+    sas_state: Any,
+) -> None:
+    """Route legacy hkdf-hmac-sha256 to vodozemac's libolm-compat MAC.
+
+    nio 0.26.0 negotiates ``hkdf-hmac-sha256`` (v1) but computes and verifies
+    the MAC with the standard ``calculate_mac`` (valid base64, the ``.v2``
+    wire format). The v1 wire format is libolm's invalid-base64 output, so
+    Element cancels with ``m.key_mismatch``. Route the legacy method to
+    ``calculate_mac_invalid_base64`` in both directions so generation and
+    verification agree.
+    """
+    if getattr(sas_cls, "_matrix_e2ee_mac_patched", False):
+        return
+
+    def _select_mac_func(self):
+        if self.chosen_mac_method == "hkdf-hmac-sha256":
+            return self.established_sas.calculate_mac_invalid_base64
+        return self.established_sas.calculate_mac
+
+    def get_mac(self):
+        if not self.sas_accepted:
+            raise local_protocol_error("SAS string wasn't yet accepted")
+        if self.state == sas_state.canceled:
+            raise local_protocol_error(
+                "SAS verification was canceled, can't generate MAC."
+            )
+        key_id = f"ed25519:{self.own_device}"
+        assert self.established_sas
+        assert self.chosen_mac_method
+        calculate_mac = _select_mac_func(self)
+        info = (
+            "MATRIX_KEY_VERIFICATION_MAC"
+            f"{self.own_user}{self.own_device}"
+            f"{self.other_olm_device.user_id}{self.other_olm_device.id}"
+            f"{self.transaction_id}"
+        )
+        mac = {key_id: calculate_mac(self.own_fp_key, info + key_id)}
+        content = {
+            "mac": mac,
+            "keys": calculate_mac(key_id, info + "KEY_IDS"),
+            "transaction_id": self.transaction_id,
+        }
+        return to_device_message(
+            "m.key.verification.mac",
+            self.other_olm_device.user_id,
+            self.other_olm_device.id,
+            content,
+        )
+
+    def receive_mac_event(self, event):
+        if self.verified:
+            return
+        if not self._event_ok(event):
+            return
+        if self.state != sas_state.key_received:
+            self.state = sas_state.canceled
+            self.cancel_code, self.cancel_reason = self._unexpected_message_error
+            return
+        info = (
+            f"MATRIX_KEY_VERIFICATION_MAC{self.other_olm_device.user_id}"
+            f"{self.other_olm_device.id}{self.own_user}{self.own_device}"
+            f"{self.transaction_id}"
+        )
+        key_ids = ",".join(sorted(event.mac.keys()))
+        assert self.established_sas
+        assert self.chosen_mac_method
+        calculate_mac = _select_mac_func(self)
+        if event.keys != calculate_mac(key_ids, info + "KEY_IDS"):
+            self.state = sas_state.canceled
+            self.cancel_code, self.cancel_reason = self._key_mismatch_error
+            return
+        for key_id, key_mac in event.mac.items():
+            try:
+                key_type, device_id = key_id.split(":", 2)
+            except ValueError:
+                self.state = sas_state.canceled
+                self.cancel_code, self.cancel_reason = self._invalid_message_error
+                return
+            if key_type != "ed25519":
+                self.state = sas_state.canceled
+                self.cancel_code, self.cancel_reason = self._key_mismatch_error
+                return
+            if device_id != self.other_olm_device.id:
+                continue
+            other_fp_key = self.other_olm_device.ed25519
+            if key_mac != calculate_mac(other_fp_key, info + key_id):
+                self.state = sas_state.canceled
+                self.cancel_code, self.cancel_reason = self._key_mismatch_error
+                return
+            self.verified_devices.append(device_id)
+        if not self.verified_devices:
+            self.state = sas_state.canceled
+            self.cancel_code, self.cancel_reason = self._key_mismatch_error
+        self.state = sas_state.mac_received
+
+    sas_cls.get_mac = get_mac
+    sas_cls.receive_mac_event = receive_mac_event
+    sas_cls._matrix_e2ee_mac_patched = True
+
+
+def _patch_nio_sas_mac() -> None:
+    """Fix nio 0.26.0 legacy SAS MAC encoding. No-op when nio is absent."""
+    try:
+        from nio.crypto.sas import Sas, SasState
+        from nio.event_builders import ToDeviceMessage
+        from nio.exceptions import LocalProtocolError
+    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
+        return
+    _apply_sas_mac_patch(Sas, ToDeviceMessage, LocalProtocolError, SasState)
+
+
 def room_allowed(room_id: str, allowed_rooms: list[str]) -> bool:
     """Empty allowlist forbids every room."""
     return bool(allowed_rooms) and room_id in allowed_rooms
@@ -382,6 +497,7 @@ class MatrixE2EEClient:
         _patch_nio_sas_timeout()
         _patch_nio_sas_commitment()
         _patch_nio_sas_emoji()
+        _patch_nio_sas_mac()
         store = str(await asyncio.to_thread(ensure_store_dir, self._config_dir))
         factory = self._nio_client_factory
         if factory is not None:
