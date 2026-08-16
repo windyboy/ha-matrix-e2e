@@ -1128,14 +1128,25 @@ class MatrixE2EEClient:
             )
             return
         if kind == "cancel":
+            code = getattr(event, "code", None)
+            reason = getattr(event, "reason", None)
             sas = self._get_sas(nio, transaction_id)
             user_id, device_id = self._sas_party(sas, event)
             self._sas_started_at.pop(transaction_id, None)
+            _LOGGER.warning(
+                "matrix_e2ee verification canceled txn=%s sender=%s code=%s reason=%s",
+                transaction_id,
+                getattr(event, "sender", None),
+                code,
+                reason,
+            )
             self._emit_verification(
                 "canceled",
                 transaction_id=transaction_id,
                 user_id=user_id,
                 device_id=device_id,
+                code=code,
+                reason=reason,
             )
             return
         if self._sas_is_timed_out(nio, transaction_id):
