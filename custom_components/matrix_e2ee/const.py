@@ -59,6 +59,7 @@ ERROR_VERIFICATION_PEER_DENIED = "verification_peer_denied"
 ERROR_SOFT_LOGOUT = "soft_logout"
 ERROR_HARD_LOGOUT = "hard_logout"
 ERROR_REFRESH_TOKEN_UNSUPPORTED = "refresh_token_unsupported"
+ERROR_INVALID_STATE = "invalid_state"
 
 # matrix-nio ClientConfig default. First login must never persist this value.
 NIO_DEFAULT_PICKLE_KEY = "DEFAULT_KEY"

@@ -28,6 +28,7 @@ from .const import (
     ERROR_UNVERIFIED_DEVICE,
     ERROR_VERIFICATION_TIMEOUT,
     ERROR_VERIFICATION_PEER_DENIED,
+    ERROR_INVALID_STATE,
     EVENT_COMMAND,
     EVENT_ERROR,
     EVENT_VERIFICATION,
@@ -473,6 +474,11 @@ class MatrixE2EEClient:
 
     async def async_reauthenticate(self, password: str) -> None:
         """Replace the access token after soft logout. Never creates a new device."""
+        if not self._soft_logged_out:
+            raise MatrixE2EEError(
+                ERROR_INVALID_STATE,
+                "session is not soft-logged-out; reauthenticate is not needed",
+            )
         if not isinstance(password, str) or not password:
             raise MatrixE2EEError(
                 ERROR_PASSWORD_REQUIRED,

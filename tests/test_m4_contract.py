@@ -13,6 +13,7 @@ from custom_components.matrix_e2ee.const import (
     DEVICE_NAME,
     ERROR_DEVICE_MISMATCH,
     ERROR_HARD_LOGOUT,
+    ERROR_INVALID_STATE,
     ERROR_REFRESH_TOKEN_UNSUPPORTED,
     ERROR_SOFT_LOGOUT,
     ERROR_STORE_MISSING,
@@ -262,6 +263,19 @@ async def test_soft_logout_blocks_send_commands_and_sync(tmp_path):
     await client.async_sync_loop()
     assert nio.sync_calls == 0
     assert nio.sync_forever_calls == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_reauthenticate_rejected_when_not_soft_logged_out(tmp_path):
+    await _seed_session(tmp_path)
+    events = []
+    factory, _ = _factory_holder()
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    await client.async_start()
+    with pytest.raises(MatrixE2EEError) as err:
+        await client.async_reauthenticate(REAUTH_PASSWORD)
+    assert err.value.code == ERROR_INVALID_STATE
     await client.async_stop()
 
 
