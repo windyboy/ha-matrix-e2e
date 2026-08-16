@@ -6,7 +6,13 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 import homeassistant.helpers.config_validation as cv
 
@@ -40,6 +46,11 @@ def _base_error(code: str) -> str:
     if code in (ERROR_LOGIN_FAILED, ERROR_PASSWORD_REQUIRED):
         return "invalid_auth"
     return "cannot_connect"
+
+
+def _csv_to_list(value: str) -> list[str]:
+    """Split a comma-separated string into a trimmed, non-empty list."""
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -125,6 +136,11 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
             entry, data_updates={CONF_HOMESERVER: user_input[CONF_HOMESERVER]}
         )
 
+    @staticmethod
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow for editing access controls."""
+        return MatrixE2EEOptionsFlow()
+
     async def async_step_reauth(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -163,3 +179,40 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
             await client.async_start()
         finally:
             await client.async_stop()
+
+
+class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
+    """Handle matrix_e2ee options: access controls and command prefix."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit allowed_rooms / allowed_users / command_prefix."""
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    CONF_ALLOWED_ROOMS: _csv_to_list(user_input[CONF_ALLOWED_ROOMS]),
+                    CONF_ALLOWED_USERS: _csv_to_list(user_input[CONF_ALLOWED_USERS]),
+                    CONF_COMMAND_PREFIX: user_input[CONF_COMMAND_PREFIX],
+                }
+            )
+        options = self.config_entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_ALLOWED_ROOMS,
+                        default=",".join(options.get(CONF_ALLOWED_ROOMS, [])),
+                    ): cv.string,
+                    vol.Optional(
+                        CONF_ALLOWED_USERS,
+                        default=",".join(options.get(CONF_ALLOWED_USERS, [])),
+                    ): cv.string,
+                    vol.Optional(
+                        CONF_COMMAND_PREFIX,
+                        default=options.get(CONF_COMMAND_PREFIX, DEFAULT_COMMAND_PREFIX),
+                    ): cv.string,
+                }
+            ),
+        )
