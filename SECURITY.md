@@ -10,6 +10,8 @@
 
 ## Device verification (two paths)
 
+Device verification remains service/event-based in v0.2 (`start_verification` / `confirm_verification` / `cancel_verification`). A live SAS emoji UI in Home Assistant is deferred to v0.3; compare emojis via the `matrix_e2ee_verification` event today.
+
 ### 1. SAS (mutual, manual confirmation)
 
 1. Log in to the bot account in Element. This device becomes the admin/bootstrap device.
@@ -37,5 +39,5 @@ matrix-nio 0.26 does not implement cross-signing key bootstrap or self-signing. 
 
 1. Revoke the bot's Matrix device on the homeserver.
 2. Delete `.storage/matrix_e2ee_session.json` and `.storage/matrix_e2ee_store/`.
-3. Restart with a bootstrap password; first login creates a new device.
+3. Delete the integration and add it again through the UI; first login creates a new device.
 4. Re-verify via SAS (or fingerprint). Old ciphertext is not recoverable.

@@ -24,8 +24,8 @@
 
 ## 第 1 步：启动 Home Assistant
 
-1. 装好 `matrix_e2ee`，配好 YAML，重启 HA。
-2. 日志里看到 setup 成功即可。此时机器人设备 `BOT_SERVER_01` 已上线，并上传了自己的设备密钥。
+1. 装好 `matrix_e2ee`，在 UI 里添加（设置 → 设备与服务 → 添加集成 → Matrix E2EE）。
+2. 添加成功即可。此时机器人设备 `BOT_SERVER_01` 已上线，并上传了自己的设备密钥。
 
 ## 第 2 步：在 Element 发起验证
 
