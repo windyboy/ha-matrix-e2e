@@ -718,7 +718,33 @@ class MatrixE2EEClient:
         add = getattr(nio, "add_to_device_callback", None)
         if add is not None:
             add(self.handle_to_device_event, _key_verification_event_type())
+            # Diagnostic: nio parses m.key.verification.request/.ready as
+            # UnknownToDeviceEvent, so the KeyVerificationEvent filter above never
+            # sees them. Trace every verification to-device event at WARNING.
+            add(self._trace_to_device_event, _to_device_event_type())
         self._verification_enabled = True
+
+    def _trace_to_device_event(self, event: Any) -> None:
+        """Diagnostic: log every inbound verification to-device event type."""
+        source = getattr(event, "source", None)
+        if not isinstance(source, dict):
+            return
+        event_type = source.get("type")
+        if not isinstance(event_type, str) or not event_type.startswith(
+            "m.key.verification"
+        ):
+            return
+        content = source.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        _LOGGER.warning(
+            "matrix_e2ee SAS trace: type=%s class=%s sender=%s from_device=%s txn=%s",
+            event_type,
+            type(event).__name__,
+            source.get("sender"),
+            content.get("from_device"),
+            content.get("transaction_id"),
+        )
 
     def _emit_verification(self, stage: str, **extra: Any) -> None:
         payload = {"stage": stage}
@@ -977,9 +1003,15 @@ class MatrixE2EEClient:
         from_device = getattr(event, "from_device", None)
         if not sender or not from_device:
             return
+        _LOGGER.warning(
+            "matrix_e2ee SAS repair: querying keys for sender=%s device=%s",
+            sender,
+            from_device,
+        )
         await self._query_device_keys(sender)
         handle = getattr(getattr(nio, "olm", None), "handle_key_verification", None)
         if handle is None:
+            _LOGGER.warning("matrix_e2ee SAS repair: no olm.handle_key_verification")
             return
         try:
             handle(event)
@@ -1002,6 +1034,12 @@ class MatrixE2EEClient:
         transaction_id = getattr(event, "transaction_id", None)
         if not isinstance(transaction_id, str) or not transaction_id:
             return
+        _LOGGER.warning(
+            "matrix_e2ee SAS handler: kind=%s txn=%s sender=%s",
+            kind,
+            transaction_id,
+            getattr(event, "sender", None),
+        )
         if not self._bootstrap_allowed(getattr(event, "sender", None)):
             self._emit_error(
                 ERROR_VERIFICATION_PEER_DENIED, sender=getattr(event, "sender", None)
@@ -1026,9 +1064,15 @@ class MatrixE2EEClient:
             if "emoji" not in methods:
                 return
             if self._get_sas(nio, transaction_id) is None:
+                _LOGGER.warning(
+                    "matrix_e2ee SAS start: no SAS registered (nio dropped it); repairing"
+                )
                 await self._repair_dropped_start(nio, event, transaction_id)
             sas = self._get_sas(nio, transaction_id)
             if sas is None:
+                _LOGGER.warning(
+                    "matrix_e2ee SAS start: repair failed, device still unknown"
+                )
                 self._emit_error(ERROR_DEVICE_MISSING, transaction_id=transaction_id)
                 return
             accept = getattr(nio, "accept_key_verification", None)
@@ -1079,6 +1123,15 @@ def _key_verification_event_type() -> Any:
         from nio.events import KeyVerificationEvent
 
         return KeyVerificationEvent
+    except Exception:  # noqa: BLE001 — tests may not install nio extras
+        return None
+
+
+def _to_device_event_type() -> Any:
+    try:
+        from nio.events import ToDeviceEvent
+
+        return ToDeviceEvent
     except Exception:  # noqa: BLE001 — tests may not install nio extras
         return None
 
