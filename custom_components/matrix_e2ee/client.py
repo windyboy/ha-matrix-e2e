@@ -6,6 +6,7 @@ import logging
 import secrets
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -645,6 +646,12 @@ class MatrixE2EEClient:
         payload.update({key: value for key, value in extra.items() if value is not None})
         self._fire_event(EVENT_VERIFICATION, payload)
 
+    def _verification_expires_at(self) -> str:
+        """ISO UTC timestamp when the current SAS offer expires."""
+        return (
+            datetime.now(timezone.utc) + timedelta(seconds=self._verification_timeout)
+        ).isoformat()
+
     def _lookup_device(self, nio: Any, user_id: str, device_id: str) -> Any | None:
         store = getattr(nio, "device_store", None)
         if store is None:
@@ -814,6 +821,7 @@ class MatrixE2EEClient:
                 user_id=user_id,
                 device_id=device_id,
                 emojis=self._sas_emojis(sas),
+                expires_at=self._verification_expires_at(),
             )
 
     async def async_cancel_verification(self, transaction_id: str) -> None:
@@ -967,6 +975,7 @@ class MatrixE2EEClient:
                 user_id=user_id,
                 device_id=device_id,
                 emojis=self._sas_emojis(sas),
+                expires_at=self._verification_expires_at(),
             )
             return
         if kind == "mac":

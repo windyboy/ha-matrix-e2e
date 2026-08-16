@@ -142,6 +142,7 @@ async def test_outbound_sas_confirm_then_encrypted_send_and_command(tmp_path):
     sas_events = [item[1] for item in events if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "sas"]
     assert sas_events[-1]["emojis"] == [["⚓", "Anchor"], ["☎️", "Telephone"]]
     assert "body" not in sas_events[-1]
+    assert "expires_at" in sas_events[-1]
 
     await client.async_confirm_verification(txn)
     sas = nio.key_verifications[txn]
