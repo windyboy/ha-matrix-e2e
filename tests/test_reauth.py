@@ -94,6 +94,26 @@ async def test_reauth_flow_reauthenticates_soft_logged_out_client(
     await client.async_stop()
 
 
+async def test_reauth_step_ignores_entry_data_without_password(
+    hass: HomeAssistant,
+) -> None:
+    """HA invokes reauth with data=entry.data (no password); show the form."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=USERNAME,
+        data={CONF_HOMESERVER: HS, CONF_USERNAME: USERNAME},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data={CONF_HOMESERVER: HS, CONF_USERNAME: USERNAME},
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "reauth"
+
+
 async def test_reconfigure_updates_homeserver_only(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(
         domain=DOMAIN,
