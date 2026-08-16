@@ -233,7 +233,10 @@ else:
                 return
             task = client._sync_task
             if task is None or getattr(task, "done", lambda: True)():
-                client._sync_task = hass.async_create_task(client.async_sync_loop())
+                # Background task — does not block bootstrap or shutdown.
+                client._sync_task = hass.async_create_background_task(
+                    client.async_sync_loop(), "matrix_e2ee_sync_loop"
+                )
 
         async_register_admin_service(
             hass,
@@ -302,7 +305,10 @@ else:
         if fingerprint:
             _fire_event(hass, EVENT_FINGERPRINT, fingerprint)
 
-        client._sync_task = hass.async_create_task(client.async_sync_loop())
+        # Background task — does not block bootstrap or shutdown.
+        client._sync_task = hass.async_create_background_task(
+            client.async_sync_loop(), "matrix_e2ee_sync_loop"
+        )
 
         async def _on_stop(_event) -> None:
             await client.async_stop()

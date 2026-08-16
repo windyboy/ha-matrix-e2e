@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from homeassistant.core import HomeAssistant
@@ -61,6 +63,16 @@ def _make_entry(hass: HomeAssistant) -> MockConfigEntry:
     return entry
 
 
+class BlockingSyncNio(FakeNio):
+    """FakeNio whose sync_forever never returns (mirrors real matrix-nio)."""
+
+    async def sync_forever(self, timeout=0, since=None, **kwargs):
+        self.sync_forever_calls.append(
+            {"timeout": timeout, "since": since, "callback_count": len(self.callbacks)}
+        )
+        await asyncio.Event().wait()
+
+
 async def test_setup_entry_registers_services_and_starts_sync(
     hass: HomeAssistant, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -99,3 +111,23 @@ async def test_setup_entry_soft_logout_raises_auth_failed(
     # The client stays reachable so the reauth flow can reauthenticate it.
     client = hass.data[DOMAIN][entry.entry_id]
     assert client._soft_logged_out is True
+
+
+async def test_sync_loop_is_background_task(
+    hass: HomeAssistant, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """async_sync_loop must not block async_block_till_done (startup wrap-up)."""
+    monkeypatch.setattr(matrix_e2ee, "_NIO_CLIENT_FACTORY", BlockingSyncNio)
+    await _seed_session(tmp_path)
+    entry = _make_entry(hass)
+
+    assert await async_setup_entry(hass, entry) is True
+
+    client = hass.data[DOMAIN][entry.entry_id]
+    assert client._sync_task is not None
+
+    # sync_forever never returns; a tracked task would hang async_block_till_done
+    # for the full startup timeout. A background task must not.
+    await asyncio.wait_for(hass.async_block_till_done(), timeout=1)
+
+    assert await async_unload_entry(hass, entry) is True
