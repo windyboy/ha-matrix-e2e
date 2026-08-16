@@ -109,8 +109,10 @@
 
 ### 方向 A：Element 发起（peer-initiated，bot 是接受方，`we_started_it=False`）
 
+> 完整流程以 `request → ready` 开头（由集成 `_handle_verification_request()` 桥接），下表从 SAS 阶段的 `start` 开始。
+
 | # | 事件 | 谁处理 | 动作 |
-|---|---|---|---|
+|---|---|---|
 | 1 | `start`（Element → bot） | nio `handle_key_verification` | 查 `device_store`（靠 `_query_device_keys` 预热）；命中则 `Sas.from_key_verification_start` 建 `Sas(we_started_it=False, state=started)` 并注册 `key_verifications[txn]`；**miss 则丢弃该 start 并加 `users_for_key_query`** |
 | 2 | — | 集成 `handle_to_device_event("start")` | 若 nio 已丢弃该 start（设备未知），`_repair_dropped_start()` 查 key 后重喂 start 让 nio 建 SAS；随后 `accept_key_verification()` 发 `accept` |
 | 3 | `key`（Element → bot） | nio `handle_key_verification` | `receive_key_event()` 建立共享密钥；`not we_started_it` → 自动 `share_key()` 入队 |
@@ -134,6 +136,7 @@
 
 ### 关键事实
 
+- **request/ready 由集成桥接**：matrix-nio 0.26.0 没有 `m.key.verification.request` / `ready` 处理（request 被解析成 `UnknownToDeviceEvent` 丢弃）。现代 Element 走 `request → ready → start …`，集成 `_handle_verification_request()` 负责校验 request 并回 `ready`，之后才由 nio 的 SAS 状态机接管 `start`。
 - **集成不处理 `accept`**：`_verification_kind()` 只映射 `start/key/mac/cancel`，`accept` 由 nio 内部状态机自动处理（方向 B 的 #2）。
 - **key 的发送归 nio 管**：无论哪个方向，bot 的 `key` 都由 nio 内部 `share_key()` 入队、`sync_forever` 发出；集成**不应**手动 `share_key`。
 - **mac 只由 `confirm_verification` 服务发送一次**：`confirm_short_auth_string()` 内部已 `accept_sas()` + `get_mac()`。
@@ -141,4 +144,5 @@
   - **W1N-169**：~~当前实现对 key 和 mac 各多发一次（方向 A 中集成手动 `share_key`、`mac` handler 里 `_try_confirm` 重复发 mac）。~~ 已修复：key 由 nio 内部状态机在收到 peer key 时统一发送，mac 仅由 `confirm_verification` 发送。
   - **W1N-170**：~~bot 上线后才新增的设备，第一次 SAS 的 `start` 会被 nio 丢弃（"unknown device"），需重试一次。~~ 已修复：`_repair_dropped_start()` 在收到未知设备的 `start` 时自动查 key 并重喂，无需手动重试。
   - **W1N-172**：~~nio 0.26.0 的 `Sas._last_event_time` 从不刷新，SAS 在创建 60s 后必然超时（即使人还在比对 emoji）。~~ 已修复：`_patch_nio_sas_timeout()` monkeypatch `timed_out` 忽略失效的 60s 事件超时，只保留 5min 总超时；集成自己的超时对齐为 4min。
+  - **W1N-173**：~~matrix-nio 0.26.0 缺 `request`/`ready` 握手，Element 的验证请求在第一步就被丢弃，最终只收到 `cancel`。~~ 已修复（P0）：`_handle_verification_request()` 校验 request 并回 `ready`，让 Element 继续发 `start`。P1（`m.key.verification.done`）后续完善。
   - **W1N-171**：SAS 全链路从未在真实 Matrix homeserver 上做过端到端验证（现有测试全用 FakeNio）。暂缓解决。

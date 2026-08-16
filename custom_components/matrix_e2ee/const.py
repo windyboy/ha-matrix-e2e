@@ -43,6 +43,15 @@ DEVICE_NAME = "Home Assistant matrix_e2ee"
 # so we emit a clear `verification_timeout` event instead of nio silently canceling.
 VERIFICATION_TIMEOUT_SECONDS = 240
 
+SAS_METHOD_V1 = "m.sas.v1"
+VERIFICATION_REQUEST = "m.key.verification.request"
+VERIFICATION_READY = "m.key.verification.ready"
+
+# Matrix spec: to-device verification request timestamps must not be more than
+# 5 minutes in the future nor more than 10 minutes old (milliseconds).
+VERIFICATION_REQUEST_MAX_FUTURE_MS = 5 * 60 * 1000
+VERIFICATION_REQUEST_MAX_AGE_MS = 10 * 60 * 1000
+
 ERROR_SESSION_CORRUPT = "session_corrupt"
 ERROR_SESSION_MISSING = "session_missing"
 ERROR_PASSWORD_REQUIRED = "password_required"
