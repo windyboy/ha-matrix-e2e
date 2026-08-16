@@ -33,6 +33,8 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     }
 )
 
+REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): cv.string})
+
 
 def _base_error(code: str) -> str:
     if code in (ERROR_LOGIN_FAILED, ERROR_PASSWORD_REQUIRED):
@@ -101,6 +103,43 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_COMMAND_PREFIX, DEFAULT_COMMAND_PREFIX
                 ),
             },
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Allow editing the homeserver (username stays read-only)."""
+        entry = self._get_reconfigure_entry()
+        if user_input is None:
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(
+                            CONF_HOMESERVER, default=entry.data[CONF_HOMESERVER]
+                        ): cv.string,
+                    }
+                ),
+            )
+        return self.async_update_reload_and_abort(
+            entry, data_updates={CONF_HOMESERVER: user_input[CONF_HOMESERVER]}
+        )
+
+    async def async_step_reauth(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Re-authenticate a soft-logged-out client using the running instance."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            client = self.hass.data[DOMAIN][self.context["entry_id"]]
+            try:
+                await client.async_reauthenticate(user_input[CONF_PASSWORD])
+            except MatrixE2EEError as err:
+                errors["base"] = _base_error(err.code)
+            else:
+                return self.async_abort(reason="reauth_successful")
+        return self.async_show_form(
+            step_id="reauth", data_schema=REAUTH_SCHEMA, errors=errors
         )
 
     async def _ensure_login(self, user_input: dict[str, Any]) -> None:
