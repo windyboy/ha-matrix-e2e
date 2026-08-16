@@ -777,7 +777,7 @@ class MatrixE2EEClient:
             self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
             raise MatrixE2EEError(ERROR_DEVICE_MISSING, "device is not in the crypto store")
         actual = getattr(device, "ed25519", None)
-        if not isinstance(actual, str) or actual.strip().casefold() != ed25519.strip().casefold():
+        if not isinstance(actual, str) or actual.strip() != ed25519.strip():
             self._emit_error(
                 ERROR_FINGERPRINT_MISMATCH, user_id=user_id, device_id=device_id
             )

@@ -370,3 +370,21 @@ async def test_verify_device_by_fingerprint_requires_match(tmp_path):
     await client.async_verify_device_by_fingerprint(USER, PEER_DEVICE, "ED25519_DEVICE_KEY")
     assert nio.device_store[USER][PEER_DEVICE].verified is True
     await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_verify_device_by_fingerprint_is_case_sensitive(tmp_path):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+
+    # Unpadded Base64 is case-sensitive: a case-only difference is a different key.
+    with pytest.raises(MatrixE2EEError) as exc:
+        await client.async_verify_device_by_fingerprint(
+            USER, PEER_DEVICE, "ed25519_device_key"
+        )
+    assert exc.value.code == ERROR_FINGERPRINT_MISMATCH
+    assert nio.device_store[USER][PEER_DEVICE].verified is False
+    await client.async_stop()
