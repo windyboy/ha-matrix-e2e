@@ -85,6 +85,7 @@ class FakeOlm:
                 "curve25519": "CURVE25519_PUB_KEY",
             }
         )
+        self.users_for_key_query: set[str] = set()
 
     def verify_device(self, device):
         device.verified = True
@@ -129,6 +130,7 @@ class FakeNio:
         self.closed = False
         self.sync_calls = 0
         self.olm: FakeOlm | None = FakeOlm()
+        self.keys_query_calls: list[str] = []
         self.rooms: dict[str, SimpleNamespace] = {}
         self.devices_trusted = False
         self.loaded_sync_token: str | None = None
@@ -183,6 +185,10 @@ class FakeNio:
             return WhoamiError(soft_logout=True)
         if self.whoami_hard_logout:
             return WhoamiError(soft_logout=False)
+        return object()
+
+    async def keys_query(self):
+        self.keys_query_calls.append(self.user_id)
         return object()
 
     async def room_send(

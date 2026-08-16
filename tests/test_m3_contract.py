@@ -388,3 +388,52 @@ async def test_verify_device_by_fingerprint_is_case_sensitive(tmp_path):
     assert exc.value.code == ERROR_FINGERPRINT_MISMATCH
     assert nio.device_store[USER][PEER_DEVICE].verified is False
     await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_first_login_queries_own_device_keys(tmp_path):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+    assert BOT in nio.olm.users_for_key_query
+    assert nio.keys_query_calls == [BOT]
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_restore_queries_own_device_keys(tmp_path):
+    factory, _ = _factory_holder()
+    first = _client(tmp_path, lambda t, d: None, factory)
+    await first.async_start()
+    await first.async_stop()
+
+    factory2, created2 = _factory_holder()
+    second = _client(tmp_path, lambda t, d: None, factory2)
+    await second.async_start()
+    nio2 = created2["nio"]
+    assert BOT in nio2.olm.users_for_key_query
+    assert nio2.keys_query_calls == [BOT]
+    await second.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_keys_query_failure_does_not_block_setup(tmp_path):
+    created: dict[str, FakeNio] = {}
+
+    def factory(*args, **kwargs):
+        nio = FakeNio(*args, **kwargs)
+        nio.user_id = BOT
+
+        async def fail_keys_query():
+            raise RuntimeError("keys query failed")
+
+        nio.keys_query = fail_keys_query
+        created["nio"] = nio
+        return nio
+
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+    assert BOT in nio.olm.users_for_key_query
+    await client.async_stop()

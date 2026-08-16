@@ -296,6 +296,7 @@ class MatrixE2EEClient:
         else:
             await self._restore(existing)
         if not self._soft_logged_out:
+            await self._query_own_device_keys()
             self.enable_verification_callbacks()
 
     async def _first_login(self) -> None:
@@ -390,6 +391,30 @@ class MatrixE2EEClient:
         upload = getattr(nio, "keys_upload", None)
         if should_upload and upload is not None:
             await _maybe_await(upload())
+
+    async def _query_own_device_keys(self) -> None:
+        """Fetch the bot account's own device keys so inbound SAS can build a session."""
+        nio = self.nio
+        if nio is None:
+            return
+        olm = getattr(nio, "olm", None)
+        user_id = getattr(nio, "user_id", None)
+        query = getattr(olm, "users_for_key_query", None) if olm is not None else None
+        if query is None or not user_id:
+            return
+        try:
+            query.add(user_id)
+        except (AttributeError, TypeError):
+            return
+        keys_query = getattr(nio, "keys_query", None)
+        if keys_query is None:
+            return
+        try:
+            await _maybe_await(keys_query())
+        except Exception:  # noqa: BLE001 — key query must not block setup
+            _LOGGER.warning(
+                "matrix_e2ee failed to query own device keys; inbound SAS may fail"
+            )
 
     async def async_stop(self) -> None:
         """Cancel sync and close the nio client."""
@@ -537,6 +562,7 @@ class MatrixE2EEClient:
         self.session = new_session
         self._soft_logged_out = False
         self._install_secret_filter()
+        await self._query_own_device_keys()
         self.enable_verification_callbacks()
         _LOGGER.info("matrix_e2ee reauthenticate replaced access token; device unchanged")
 
