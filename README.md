@@ -115,20 +115,43 @@ matrix_e2ee:
 
 Empty `allowed_rooms`: no send, no inbound commands. Empty `allowed_users`: no inbound commands; send to allowed rooms is still permitted.
 
-## Services and events (M1–M4)
+## Services and events (M1–M5)
 
 - Service: `matrix_e2ee.send_message` (`message`, `room_id`)
 - Service: `matrix_e2ee.reauthenticate` (`password`) — after a **soft logout** only; replaces the access token, keeps `device_id` and the crypto store
+- Services: `matrix_e2ee.start_verification` (`user_id`, `device_id`), `confirm_verification` (`transaction_id`), `cancel_verification` (`transaction_id`)
+- Services: `matrix_e2ee.get_fingerprint` (no fields), `matrix_e2ee.verify_device` (`user_id`, `device_id`)
 - Event: `matrix_e2ee_command` (`room_id`, `sender`, `command`, `args` only — never the raw body)
 - Event: `matrix_e2ee_error` (error codes, no secrets)
-- Event: `matrix_e2ee_verification` (`stage`, `transaction_id`, `user_id`, `device_id`, optional `emojis`)
-- Services: `matrix_e2ee.start_verification` (`user_id`, `device_id`), `confirm_verification` (`transaction_id`), `cancel_verification` (`transaction_id`)
+- Event: `matrix_e2ee_verification` (`stage`, `transaction_id`, `user_id`, `device_id`, optional `emojis`, optional `expires_at`)
+- Event: `matrix_e2ee_fingerprint` (`user_id`, `device_id`, `ed25519`, `curve25519` — public keys only)
+
+`start_verification`, `confirm_verification`, `cancel_verification`, `verify_device`, and `reauthenticate` are admin-only actions; do not expose them to non-admin users or automations.
 
 SAS emoji comparison happens in Developer Tools via `matrix_e2ee_verification` (`stage: sas`). Confirming is the only step that marks a device verified. Accepting an inbound SAS start is protocol continuation, not trust.
 
 Commands fire Home Assistant events only. This integration never calls `domain.service` itself. Map commands in automations.
 
 `notify.matrix_e2ee` is deferred (no Linear ticket). There is no `matrix_e2ee_message` event.
+
+## Device verification
+
+Two paths are supported; see [SECURITY.md](SECURITY.md) for the trust model.
+
+### 1. SAS auto-completion (mutual, recommended)
+
+1. Log in to the bot account in Element (this becomes the bootstrap/admin device) and bootstrap its cross-signing identity.
+2. Start the server bot — it creates its device and uploads device keys.
+3. In Element, open the bot account's Sessions and verify the server bot device.
+4. The integration auto-completes the SAS handshake when the initiator is the bot's own account; confirm the emoji match in Element.
+
+Only the bot's own account or users in `allowed_users` may initiate SAS (`verification_peer_denied` otherwise).
+
+### 2. One-sided fingerprint (fallback)
+
+1. Call `matrix_e2ee.get_fingerprint` (or read `matrix_e2ee_fingerprint`) for the bot's `ed25519` device key.
+2. In Element, open the bot user's sessions and use "Manually verify by text".
+3. Compare the session key with the fingerprint. This trusts the bot from Element's side only; call `matrix_e2ee.verify_device` to trust a device from the bot's side.
 
 ## Recovery runbook
 
