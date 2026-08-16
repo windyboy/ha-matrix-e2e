@@ -13,7 +13,9 @@ from custom_components.matrix_e2ee import client as client_module
 from custom_components.matrix_e2ee.client import (
     MatrixE2EEClient,
     MatrixE2EEError,
+    _apply_sas_commitment_patch,
     _apply_sas_timeout_patch,
+    _sas_commitment,
 )
 from custom_components.matrix_e2ee.const import (
     ERROR_DEVICE_MISSING,
@@ -614,6 +616,59 @@ def test_sas_timeout_patch_ignores_event_timeout():
     sas.creation_time = datetime.now() - timedelta(minutes=6)
     assert sas.timed_out is True
     assert sas.state == "canceled"
+
+
+def test_sas_commitment_is_unpadded_base64():
+    """The commitment wire format is unpadded base64, never hexdigest."""
+    # SHA-256("abc") as unpadded base64, matching pre-0.26.0 olm.sha256.
+    assert _sas_commitment("abc", "") == "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"
+    assert _sas_commitment("abc", "") != (
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    )
+
+
+def test_sas_commitment_patch_fixes_hex_encoding():
+    """The patch rewrites nio 0.26.0 hexdigest commitments to unpadded base64."""
+    import hashlib
+
+    def to_canonical_json(obj):
+        return obj
+
+    class SasLike:
+        @classmethod
+        def from_key_verification_start(
+            cls, own_user, own_device, own_fp_key, other_olm_device, event
+        ):
+            obj = cls()
+            obj.commitment = hashlib.sha256(
+                obj.pubkey.encode() + event.source["content"].encode()
+            ).hexdigest()
+            return obj
+
+        def __init__(self):
+            self.pubkey = "PK"
+            self.commitment = None
+
+        def start_verification(self):
+            return SimpleNamespace(content="START")
+
+        def _check_commitment(self, key):
+            return self.commitment == hashlib.sha256(
+                key.encode() + self.start_verification().content.encode()
+            ).hexdigest()
+
+    _apply_sas_commitment_patch(SasLike, to_canonical_json)
+
+    # Responder: from_key_verification_start now emits unpadded base64.
+    event = SimpleNamespace(source={"content": "START"})
+    sas = SasLike.from_key_verification_start("u", "d", "fp", None, event)
+    assert sas.commitment == _sas_commitment("PK", "START")
+    assert sas.commitment != hashlib.sha256(b"PKSTART").hexdigest()
+
+    # Initiator: _check_commitment now verifies base64, and rejects a wrong key.
+    sas.commitment = _sas_commitment("PK", "START")
+    assert sas._check_commitment("PK") is True
+    assert sas._check_commitment("WRONG") is False
 
 
 @pytest.mark.asyncio
