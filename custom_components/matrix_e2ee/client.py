@@ -6,6 +6,7 @@ import logging
 import secrets
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ from .const import (
     ERROR_REFRESH_TOKEN_UNSUPPORTED,
     ERROR_UNVERIFIED_DEVICE,
     ERROR_VERIFICATION_TIMEOUT,
+    ERROR_VERIFICATION_PEER_DENIED,
+    ERROR_INVALID_STATE,
     EVENT_COMMAND,
     EVENT_ERROR,
     EVENT_VERIFICATION,
@@ -453,8 +456,29 @@ class MatrixE2EEClient:
             "store_sync_tokens": True,
         }
 
+    def safe_fingerprint(self) -> dict[str, Any] | None:
+        """Return the bot's own public device keys for one-sided verification."""
+        nio = self.nio
+        if nio is None:
+            return None
+        account = getattr(getattr(nio, "olm", None), "account", None)
+        identity_keys = getattr(account, "identity_keys", None)
+        if not isinstance(identity_keys, dict):
+            return None
+        return {
+            "user_id": getattr(nio, "user_id", None),
+            "device_id": getattr(nio, "device_id", None),
+            "ed25519": identity_keys.get("ed25519"),
+            "curve25519": identity_keys.get("curve25519"),
+        }
+
     async def async_reauthenticate(self, password: str) -> None:
         """Replace the access token after soft logout. Never creates a new device."""
+        if not self._soft_logged_out:
+            raise MatrixE2EEError(
+                ERROR_INVALID_STATE,
+                "session is not soft-logged-out; reauthenticate is not needed",
+            )
         if not isinstance(password, str) or not password:
             raise MatrixE2EEError(
                 ERROR_PASSWORD_REQUIRED,
@@ -628,6 +652,12 @@ class MatrixE2EEClient:
         payload.update({key: value for key, value in extra.items() if value is not None})
         self._fire_event(EVENT_VERIFICATION, payload)
 
+    def _verification_expires_at(self) -> str:
+        """ISO UTC timestamp when the current SAS offer expires."""
+        return (
+            datetime.now(timezone.utc) + timedelta(seconds=self._verification_timeout)
+        ).isoformat()
+
     def _lookup_device(self, nio: Any, user_id: str, device_id: str) -> Any | None:
         store = getattr(nio, "device_store", None)
         if store is None:
@@ -732,6 +762,26 @@ class MatrixE2EEClient:
         )
         return transaction_id
 
+    async def async_verify_device(self, user_id: str, device_id: str) -> None:
+        """Manually mark a known device verified (one-sided trust)."""
+        self._reject_if_soft_logged_out()
+        nio = self._require_nio()
+        device = self._lookup_device(nio, user_id, device_id)
+        if device is None:
+            self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
+            raise MatrixE2EEError(ERROR_DEVICE_MISSING, "device is not in the crypto store")
+        verify = getattr(getattr(nio, "olm", None), "verify_device", None) or getattr(
+            nio, "verify_device", None
+        )
+        if verify is None:
+            self._emit_error(
+                ERROR_ENCRYPTION_UNAVAILABLE, user_id=user_id, device_id=device_id
+            )
+            raise MatrixE2EEError(
+                ERROR_ENCRYPTION_UNAVAILABLE, "device verification is unavailable"
+            )
+        verify(device)
+
     async def async_confirm_verification(self, transaction_id: str) -> None:
         """Confirm SAS emojis match. This is the only path that verifies a device."""
         self._reject_if_soft_logged_out()
@@ -777,6 +827,7 @@ class MatrixE2EEClient:
                 user_id=user_id,
                 device_id=device_id,
                 emojis=self._sas_emojis(sas),
+                expires_at=self._verification_expires_at(),
             )
 
     async def async_cancel_verification(self, transaction_id: str) -> None:
@@ -826,6 +877,37 @@ class MatrixE2EEClient:
             device_id=device_id,
         )
 
+    def _bootstrap_allowed(self, sender: str | None) -> bool:
+        """Only the bot's own account or allowlisted users may drive SAS."""
+        if not isinstance(sender, str) or not sender:
+            return False
+        session = self.session
+        if session is not None and sender == session.user_id:
+            return True
+        return user_allowed(sender, self.allowed_users)
+
+    def _should_auto_confirm(self, sas: Any) -> bool:
+        """Auto-confirm self-verification, or finish an already-confirmed SAS."""
+        if bool(getattr(sas, "sas_accepted", False)):
+            return True
+        session = self.session
+        if session is None:
+            return False
+        other_user = getattr(getattr(sas, "other_olm_device", None), "user_id", None)
+        return other_user is not None and other_user == session.user_id
+
+    async def _try_confirm(self, nio: Any, transaction_id: str) -> None:
+        """Send our MAC and verify the device once the SAS is accepted."""
+        confirm = getattr(nio, "confirm_short_auth_string", None) or getattr(
+            nio, "confirm_key_verification", None
+        )
+        if confirm is None:
+            return
+        try:
+            await _maybe_await(confirm(transaction_id))
+        except Exception:  # noqa: BLE001 — protocol error is not trust
+            return
+
     async def handle_to_device_event(self, event: Any) -> None:
         """Drive inbound SAS. Accepting the protocol is not device trust."""
         if self._soft_logged_out:
@@ -838,6 +920,11 @@ class MatrixE2EEClient:
             return
         transaction_id = getattr(event, "transaction_id", None)
         if not isinstance(transaction_id, str) or not transaction_id:
+            return
+        if not self._bootstrap_allowed(getattr(event, "sender", None)):
+            self._emit_error(
+                ERROR_VERIFICATION_PEER_DENIED, sender=getattr(event, "sender", None)
+            )
             return
         if kind == "cancel":
             sas = self._get_sas(nio, transaction_id)
@@ -894,15 +981,12 @@ class MatrixE2EEClient:
                 user_id=user_id,
                 device_id=device_id,
                 emojis=self._sas_emojis(sas),
+                expires_at=self._verification_expires_at(),
             )
             return
         if kind == "mac":
-            get_mac = getattr(sas, "get_mac", None)
-            if get_mac is not None:
-                try:
-                    await self._send_to_device(nio, get_mac())
-                except Exception:  # noqa: BLE001 — protocol error is not trust
-                    return
+            if self._should_auto_confirm(sas):
+                await self._try_confirm(nio, transaction_id)
             if bool(getattr(sas, "verified", False)):
                 self._sas_started_at.pop(transaction_id, None)
                 self._emit_verification(

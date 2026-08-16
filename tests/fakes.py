@@ -39,11 +39,18 @@ class FakeSas:
         self.other_olm_device = FakeOlmDevice(user_id, device_id)
         self.we_started_it = we_started_it
         self.sas_accepted = False
+        self.mac_received = False
         self.canceled = False
         self.timed_out = False
-        self.verified = False
-        self.verified_devices: list[str] = []
         self.emojis = [("⚓", "Anchor"), ("☎️", "Telephone")]
+
+    @property
+    def verified(self):
+        return self.sas_accepted and self.mac_received
+
+    @property
+    def verified_devices(self):
+        return [self.other_olm_device.device_id] if self.verified else []
 
     def get_emoji(self):
         return list(self.emojis)
@@ -52,13 +59,15 @@ class FakeSas:
         return SimpleNamespace(type="m.key.verification.key", transaction_id=self.transaction_id)
 
     def get_mac(self):
+        if not self.sas_accepted:
+            raise LocalProtocolError("SAS string wasn't yet accepted")
         return SimpleNamespace(type="m.key.verification.mac", transaction_id=self.transaction_id)
 
     def accept_sas(self):
         self.sas_accepted = True
-        self.verified = True
-        self.verified_devices = [self.other_olm_device.device_id]
-        self.other_olm_device.verified = True
+
+    def receive_mac(self):
+        self.mac_received = True
 
 
 class LocalProtocolError(Exception):
@@ -67,6 +76,18 @@ class LocalProtocolError(Exception):
 
 class FakeOlm:
     """Presence-only stand-in: nio encrypts only when client.olm is set."""
+
+    def __init__(self):
+        self.account = SimpleNamespace(
+            identity_keys={
+                "ed25519": "ED25519_PUB_KEY",
+                "curve25519": "CURVE25519_PUB_KEY",
+            }
+        )
+
+    def verify_device(self, device):
+        device.verified = True
+        return True
 
 
 class FakeNio:
@@ -220,7 +241,6 @@ class FakeNio:
             raise LocalProtocolError(
                 f"Key verification with the transaction id {transaction_id} does not exist."
             )
-        sas.sas_accepted = True
         self.to_device_sent.append({"op": "accept", "transaction_id": transaction_id})
         return object()
 
@@ -231,12 +251,16 @@ class FakeNio:
                 f"Key verification with the transaction id {transaction_id} does not exist."
             )
         sas.accept_sas()
-        self.verified_devices.add((sas.other_olm_device.user_id, sas.other_olm_device.device_id))
-        user_devices = self.device_store.get(sas.other_olm_device.user_id, {})
-        stored = user_devices.get(sas.other_olm_device.device_id)
-        if stored is not None:
-            stored.verified = True
+        sas.get_mac()  # raises unless accepted (mirrors matrix-nio)
         self.to_device_sent.append({"op": "confirm", "transaction_id": transaction_id})
+        if sas.verified:
+            self.verified_devices.add(
+                (sas.other_olm_device.user_id, sas.other_olm_device.device_id)
+            )
+            user_devices = self.device_store.get(sas.other_olm_device.user_id, {})
+            stored = user_devices.get(sas.other_olm_device.device_id)
+            if stored is not None:
+                stored.verified = True
         return object()
 
     async def cancel_key_verification(self, transaction_id, reject=False):

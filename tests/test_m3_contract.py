@@ -13,6 +13,7 @@ from custom_components.matrix_e2ee.const import (
     ERROR_INVALID_TRANSACTION,
     ERROR_UNVERIFIED_DEVICE,
     ERROR_VERIFICATION_TIMEOUT,
+    ERROR_VERIFICATION_PEER_DENIED,
     EVENT_COMMAND,
     EVENT_ERROR,
     EVENT_VERIFICATION,
@@ -141,8 +142,12 @@ async def test_outbound_sas_confirm_then_encrypted_send_and_command(tmp_path):
     sas_events = [item[1] for item in events if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "sas"]
     assert sas_events[-1]["emojis"] == [["⚓", "Anchor"], ["☎️", "Telephone"]]
     assert "body" not in sas_events[-1]
+    assert "expires_at" in sas_events[-1]
 
     await client.async_confirm_verification(txn)
+    sas = nio.key_verifications[txn]
+    sas.receive_mac()
+    await client.handle_to_device_event(KeyVerificationMac(USER, txn))
     done = [item[1] for item in events if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done"]
     assert done
     assert nio.device_store[USER][PEER_DEVICE].verified is True
@@ -180,6 +185,9 @@ async def test_inbound_sas_accept_is_not_trust_until_confirm(tmp_path):
     assert err.value.code == ERROR_UNVERIFIED_DEVICE
 
     await client.async_confirm_verification(TXN)
+    sas = nio.key_verifications[TXN]
+    sas.receive_mac()
+    await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
     await client.async_send_message(ROOM, "hello")
     assert nio.sent[-1]["encrypted"] is True
     await client.async_stop()
@@ -236,10 +244,117 @@ async def test_mac_without_confirm_does_not_verify(tmp_path):
     nio.add_device(USER, PEER_DEVICE, verified=False)
     sas = FakeSas(TXN, USER, PEER_DEVICE)
     nio.key_verifications[TXN] = sas
+    sas.receive_mac()
     await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
     assert sas.verified is False
     assert all(not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done") for item in events)
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_send_message(ROOM, "hello")
     assert err.value.code == ERROR_UNVERIFIED_DEVICE
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_self_verification_auto_completes(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    nio.rooms[ROOM] = SimpleNamespace(room_id=ROOM, encrypted=True)
+    nio.add_device(BOT, PEER_DEVICE, verified=False)
+    sas = FakeSas(TXN, BOT, PEER_DEVICE, we_started_it=False)
+    nio.key_verifications[TXN] = sas
+
+    await client.handle_to_device_event(KeyVerificationStart(BOT, TXN, PEER_DEVICE))
+    await client.handle_to_device_event(KeyVerificationKey(BOT, TXN))
+    sas.receive_mac()
+    await client.handle_to_device_event(KeyVerificationMac(BOT, TXN))
+
+    assert sas.verified is True
+    assert nio.device_store[BOT][PEER_DEVICE].verified is True
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done" for item in events
+    )
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_cross_user_mac_before_confirm_waits_for_admin(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    nio.rooms[ROOM] = SimpleNamespace(room_id=ROOM, encrypted=True)
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    sas = FakeSas(TXN, USER, PEER_DEVICE, we_started_it=False)
+    nio.key_verifications[TXN] = sas
+
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+    await client.handle_to_device_event(KeyVerificationKey(USER, TXN))
+    sas.receive_mac()
+    await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
+
+    assert sas.verified is False
+    assert nio.device_store[USER][PEER_DEVICE].verified is False
+    assert all(
+        not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done")
+        for item in events
+    )
+
+    await client.async_confirm_verification(TXN)
+    assert sas.verified is True
+    assert nio.device_store[USER][PEER_DEVICE].verified is True
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_unknown_sender_verification_ignored(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    stranger = "@stranger:example.org"
+    nio.add_device(stranger, PEER_DEVICE, verified=False)
+    nio.key_verifications[TXN] = FakeSas(TXN, stranger, PEER_DEVICE)
+
+    await client.handle_to_device_event(
+        KeyVerificationStart(stranger, TXN, PEER_DEVICE)
+    )
+
+    assert all(
+        not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started")
+        for item in events
+    )
+    assert any(
+        item[0] == EVENT_ERROR and item[1]["code"] == ERROR_VERIFICATION_PEER_DENIED
+        for item in events
+    )
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_safe_fingerprint_exposes_public_keys(tmp_path):
+    factory, _ = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    fp = client.safe_fingerprint()
+    assert fp is not None
+    assert fp["user_id"] == BOT
+    assert fp["ed25519"] == "ED25519_PUB_KEY"
+    assert fp["curve25519"] == "CURVE25519_PUB_KEY"
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_verify_device_marks_known_device(tmp_path):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    await client.async_verify_device(USER, PEER_DEVICE)
+    assert nio.device_store[USER][PEER_DEVICE].verified is True
     await client.async_stop()

@@ -21,11 +21,14 @@ from .const import (
     DEFAULT_COMMAND_PREFIX,
     DOMAIN,
     EVENT_ERROR,
+    EVENT_FINGERPRINT,
     SERVICE_CANCEL_VERIFICATION,
     SERVICE_CONFIRM_VERIFICATION,
+    SERVICE_GET_FINGERPRINT,
     SERVICE_REAUTHENTICATE,
     SERVICE_SEND_MESSAGE,
     SERVICE_START_VERIFICATION,
+    SERVICE_VERIFY_DEVICE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,6 +110,10 @@ else:
 
         hass.data[DOMAIN] = {DATA_CLIENT: client}
 
+        fingerprint = client.safe_fingerprint()
+        if fingerprint:
+            _fire_event(hass, EVENT_FINGERPRINT, fingerprint)
+
         async def _handle_send(call) -> None:
             try:
                 await client.async_send_message(
@@ -163,6 +170,29 @@ else:
             SERVICE_CANCEL_VERIFICATION,
             _handle_cancel_verification,
             schema=TRANSACTION_SCHEMA,
+        )
+
+        async def _handle_get_fingerprint(call) -> None:
+            _fire_event(hass, EVENT_FINGERPRINT, client.safe_fingerprint() or {})
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_GET_FINGERPRINT, _handle_get_fingerprint
+        )
+
+        async def _handle_verify_device(call) -> None:
+            try:
+                await client.async_verify_device(
+                    call.data[ATTR_USER_ID], call.data[ATTR_DEVICE_ID]
+                )
+            except MatrixE2EEError as err:
+                _LOGGER.error("matrix_e2ee verify_device failed: %s", err.code)
+                _fire_event(hass, EVENT_ERROR, {"code": err.code})
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_VERIFY_DEVICE,
+            _handle_verify_device,
+            schema=START_VERIFICATION_SCHEMA,
         )
 
         async def _handle_reauthenticate(call) -> None:
