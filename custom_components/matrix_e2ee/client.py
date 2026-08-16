@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import logging
 import secrets
 import time
@@ -192,6 +194,65 @@ def _patch_nio_sas_timeout() -> None:
     _apply_sas_timeout_patch(Sas, SasState.canceled)
 
 
+def _sas_commitment(pubkey: str, canonical: str) -> str:
+    """Return SHA-256(pubkey || canonical) as unpadded base64.
+
+    This is the wire format the Matrix spec requires for the SAS commitment in
+    ``m.key.verification.accept``. nio 0.26.0 emits ``.hexdigest()`` instead,
+    which Element rejects with ``m.key_mismatch``.
+    """
+    digest = hashlib.sha256(pubkey.encode() + canonical.encode()).digest()
+    return base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _apply_sas_commitment_patch(
+    sas_cls: Any, to_canonical_json: Callable[[Any], str]
+) -> None:
+    """Rewrite nio 0.26.0 hexdigest commitments back to unpadded base64.
+
+    nio 0.26.0 replaced ``olm.sha256`` (unpadded base64) with
+    ``hashlib.sha256(...).hexdigest()`` in both ``from_key_verification_start``
+    (responder, builds the ``accept`` commitment) and ``_check_commitment``
+    (initiator, verifies the peer's commitment). Both changed together, so
+    nio↔nio still agrees while Element/rust-sdk (base64) cancels with
+    ``m.key_mismatch``. Restore base64 in both directions so neither nio↔nio
+    nor nio↔Element regresses.
+    """
+    if getattr(sas_cls, "_matrix_e2ee_commitment_patched", False):
+        return
+
+    original_from_start = sas_cls.from_key_verification_start.__func__
+
+    @classmethod
+    def patched_from_start(
+        cls, own_user, own_device, own_fp_key, other_olm_device, event
+    ):
+        sas = original_from_start(
+            cls, own_user, own_device, own_fp_key, other_olm_device, event
+        )
+        canonical = to_canonical_json(event.source["content"])
+        sas.commitment = _sas_commitment(sas.pubkey, canonical)
+        return sas
+
+    def patched_check_commitment(self, key):
+        canonical = to_canonical_json(self.start_verification().content)
+        return self.commitment == _sas_commitment(key, canonical)
+
+    sas_cls.from_key_verification_start = patched_from_start
+    sas_cls._check_commitment = patched_check_commitment
+    sas_cls._matrix_e2ee_commitment_patched = True
+
+
+def _patch_nio_sas_commitment() -> None:
+    """Fix nio 0.26.0 SAS commitment encoding. No-op when nio is absent."""
+    try:
+        from nio.api import Api
+        from nio.crypto.sas import Sas
+    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
+        return
+    _apply_sas_commitment_patch(Sas, Api.to_canonical_json)
+
+
 def room_allowed(room_id: str, allowed_rooms: list[str]) -> bool:
     """Empty allowlist forbids every room."""
     return bool(allowed_rooms) and room_id in allowed_rooms
@@ -289,6 +350,7 @@ class MatrixE2EEClient:
         device_id: str | None,
     ) -> Any:
         _patch_nio_sas_timeout()
+        _patch_nio_sas_commitment()
         store = str(await asyncio.to_thread(ensure_store_dir, self._config_dir))
         factory = self._nio_client_factory
         if factory is not None:
