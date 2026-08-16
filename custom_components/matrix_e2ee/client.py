@@ -747,12 +747,6 @@ class MatrixE2EEClient:
             return False
         return (self._monotonic() - started) >= self._verification_timeout
 
-    async def _send_to_device(self, nio: Any, message: Any) -> Any:
-        to_device = getattr(nio, "to_device", None)
-        if to_device is None or message is None:
-            return None
-        return await _maybe_await(to_device(message))
-
     async def async_start_verification(self, user_id: str, device_id: str) -> str:
         """Start SAS with a known device. Does not mark the device trusted."""
         self._reject_if_soft_logged_out()
@@ -926,18 +920,6 @@ class MatrixE2EEClient:
             return True
         return user_allowed(sender, self.allowed_users)
 
-    async def _try_confirm(self, nio: Any, transaction_id: str) -> None:
-        """Finish an admin-confirmed SAS: send our MAC and verify the device."""
-        confirm = getattr(nio, "confirm_short_auth_string", None) or getattr(
-            nio, "confirm_key_verification", None
-        )
-        if confirm is None:
-            return
-        try:
-            await _maybe_await(confirm(transaction_id))
-        except Exception:  # noqa: BLE001 — protocol error is not trust
-            return
-
     async def handle_to_device_event(self, event: Any) -> None:
         """Drive inbound SAS. Accepting the protocol is not device trust."""
         if self._soft_logged_out:
@@ -982,13 +964,6 @@ class MatrixE2EEClient:
                     self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
                     return
             sas = self._get_sas(nio, transaction_id)
-            share = getattr(sas, "share_key", None) if sas is not None else None
-            if share is not None:
-                try:
-                    await self._send_to_device(nio, share())
-                except Exception:  # noqa: BLE001 — do not log keys
-                    self._emit_error(ERROR_SEND_FAILED, transaction_id=transaction_id)
-                    return
             self._mark_sas_started(transaction_id)
             user_id, device_id = self._sas_party(sas, event)
             self._emit_verification(
@@ -1015,8 +990,6 @@ class MatrixE2EEClient:
             )
             return
         if kind == "mac":
-            if bool(getattr(sas, "sas_accepted", False)):
-                await self._try_confirm(nio, transaction_id)
             if bool(getattr(sas, "verified", False)):
                 self._sas_started_at.pop(transaction_id, None)
                 self._emit_verification(
