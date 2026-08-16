@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from custom_components.matrix_e2ee.client import MatrixE2EEClient, MatrixE2EEError
+from custom_components.matrix_e2ee.client import (
+    MatrixE2EEClient,
+    MatrixE2EEError,
+    _apply_sas_timeout_patch,
+)
 from custom_components.matrix_e2ee.const import (
     ERROR_DEVICE_MISSING,
     ERROR_FINGERPRINT_MISMATCH,
@@ -476,3 +481,91 @@ async def test_confirm_sends_mac_exactly_once(tmp_path):
         item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done" for item in events
     )
     await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_inbound_start_unknown_device_is_repaired(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    # Peer device was created after bot startup: known to the homeserver but not
+    # yet in the device store (nio would have dropped the inbound start).
+    nio.add_pending_device(USER, PEER_DEVICE, verified=False)
+
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+
+    # The integration must query the sender's keys, re-feed the dropped start into
+    # nio, and accept exactly once — no manual retry.
+    assert USER in nio.olm.users_for_key_query
+    assert any(
+        getattr(c, "transaction_id", None) == TXN
+        for c in nio.olm.handle_key_verification_calls
+    )
+    assert TXN in nio.key_verifications
+    assert nio.key_verifications[TXN].other_olm_device.user_id == USER
+    assert nio.key_verifications[TXN].other_olm_device.device_id == PEER_DEVICE
+    assert [s["op"] for s in nio.to_device_sent] == ["accept"]
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started"
+        for item in events
+    )
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_inbound_start_unknown_device_still_missing_emits_error(tmp_path):
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    await client.async_start()
+    nio = created["nio"]
+    # No pending device: even after the key query, the device stays unknown.
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+
+    assert USER in nio.olm.users_for_key_query
+    assert TXN not in nio.key_verifications
+    assert any(
+        item[0] == EVENT_ERROR and item[1]["code"] == ERROR_DEVICE_MISSING
+        for item in events
+    )
+    await client.async_stop()
+
+
+def test_sas_timeout_patch_ignores_event_timeout():
+    """The nio workaround keeps SAS alive through a slow emoji check."""
+    canceled = "canceled"
+
+    class SasLike:
+        _max_age = timedelta(minutes=5)
+        _timeout_error = ("m.timeout", "timed out")
+
+        def __init__(self):
+            self.creation_time = datetime.now()
+            self.state = "started"
+            self.cancel_code = None
+            self.cancel_reason = None
+            self.sas_accepted = False
+
+        @property
+        def verified(self):
+            return False
+
+        @property
+        def canceled(self):
+            return self.state == "canceled"
+
+    _apply_sas_timeout_patch(SasLike, canceled)
+
+    sas = SasLike()
+    assert sas.timed_out is False
+
+    # 90 s old: buggy nio would time out (60 s event timeout); the patch keeps it.
+    sas.creation_time = datetime.now() - timedelta(seconds=90)
+    assert sas.timed_out is False
+
+    # Past _max_age (5 min): the patch still honors the total-age timeout.
+    sas.creation_time = datetime.now() - timedelta(minutes=6)
+    assert sas.timed_out is True
+    assert sas.state == "canceled"
