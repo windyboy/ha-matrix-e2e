@@ -146,7 +146,7 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Re-authenticate a soft-logged-out client using the running instance."""
         errors: dict[str, str] = {}
-        if user_input is not None:
+        if user_input is not None and CONF_PASSWORD in user_input:
             client = self.hass.data[DOMAIN][self.context["entry_id"]]
             try:
                 await client.async_reauthenticate(user_input[CONF_PASSWORD])

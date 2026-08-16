@@ -72,8 +72,11 @@ async def test_options_flow_persists_and_schedules_reload(
     assert scheduled == [entry.entry_id]
 
 
-async def test_options_flow_clears_lists(hass: HomeAssistant) -> None:
+async def test_options_flow_clears_lists(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
     entry = _make_entry(hass)
+    monkeypatch.setattr(
+        hass.config_entries, "async_schedule_reload", lambda entry_id: None
+    )
     hass.config_entries.async_update_entry(
         entry,
         options={
