@@ -23,20 +23,6 @@
         "data": {
           "homeserver": "Homeserver URL"
         }
-      },
-      "init": {
-        "title": "Options",
-        "description": "Edit access controls and the command prefix.",
-        "data": {
-          "allowed_rooms": "Allowed rooms",
-          "allowed_users": "Allowed users",
-          "command_prefix": "Command prefix"
-        },
-        "data_description": {
-          "allowed_rooms": "Comma-separated room IDs. Empty means no send and no inbound commands.",
-          "allowed_users": "Comma-separated user IDs. Empty means no inbound commands.",
-          "command_prefix": "Single character prefix that starts a command."
-        }
       }
     },
     "error": {
@@ -49,6 +35,49 @@
       "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
       "unknown": "Unknown error",
       "login_failed": "Login failed"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "access_controls": "Access controls",
+          "verify_device": "Verify device"
+        }
+      },
+      "access_controls": {
+        "title": "Access controls",
+        "description": "Edit access controls and the command prefix.",
+        "data": {
+          "allowed_rooms": "Allowed rooms",
+          "allowed_users": "Allowed users",
+          "command_prefix": "Command prefix"
+        },
+        "data_description": {
+          "allowed_rooms": "Comma-separated room IDs. Empty means no send and no inbound commands.",
+          "allowed_users": "Comma-separated user IDs. Empty means no inbound commands.",
+          "command_prefix": "Single character prefix that starts a command."
+        }
+      },
+      "compare": {
+        "title": "Verify device",
+        "description": "Compare these emojis with the ones shown in your Matrix client. They must match exactly.\n\n{emojis}\n\nUser: {user_id}\nDevice: {device_id}",
+        "menu_options": {
+          "match": "They match",
+          "mismatch": "They do not match"
+        }
+      }
+    },
+    "progress": {
+      "wait_peer": "Waiting for you to verify this device from your Matrix client.\n\nHome Assistant device:\n{fingerprint}",
+      "verify": "Waiting for the other device to confirm the verification."
+    },
+    "abort": {
+      "no_client": "The matrix_e2ee client is not running.",
+      "verification_failed": "Device verification failed.",
+      "verification_canceled": "Device verification was canceled.",
+      "verification_timeout": "Device verification timed out.",
+      "verification_complete": "Device verification complete."
     }
   }
 }

@@ -146,7 +146,9 @@ def _is_auth_failure(response: Any) -> bool:
 
 def _has_unsupported_token_lifetime(response: Any, nio: Any) -> bool:
     """v1 refuses refresh tokens and short-lived access tokens."""
-    refresh = getattr(response, "refresh_token", None) or getattr(nio, "refresh_token", None)
+    refresh = getattr(response, "refresh_token", None) or getattr(
+        nio, "refresh_token", None
+    )
     if isinstance(refresh, str) and refresh:
         return True
     expires = getattr(response, "expires_in_ms", None)
@@ -567,7 +569,9 @@ class MatrixE2EEClient:
             raise MatrixE2EEError(ERROR_LOGIN_FAILED, "matrix login failed")
         if not nio.user_id or not nio.device_id or not nio.access_token:
             await self._close_nio()
-            raise MatrixE2EEError(ERROR_LOGIN_FAILED, "matrix login returned incomplete device")
+            raise MatrixE2EEError(
+                ERROR_LOGIN_FAILED, "matrix login returned incomplete device"
+            )
         if _has_unsupported_token_lifetime(response, nio):
             await self._close_nio()
             raise MatrixE2EEError(
@@ -792,7 +796,9 @@ class MatrixE2EEClient:
             self._password = previous_password
             self._install_secret_filter()
             self._emit_error(ERROR_LOGIN_FAILED)
-            raise MatrixE2EEError(ERROR_LOGIN_FAILED, "reauthenticate login failed") from err
+            raise MatrixE2EEError(
+                ERROR_LOGIN_FAILED, "reauthenticate login failed"
+            ) from err
         if _is_error_response(response):
             self._restore_session_token(nio, session)
             self._password = previous_password
@@ -822,7 +828,9 @@ class MatrixE2EEClient:
             self._password = previous_password
             self._install_secret_filter()
             self._emit_error(ERROR_LOGIN_FAILED)
-            raise MatrixE2EEError(ERROR_LOGIN_FAILED, "reauthenticate returned no access token")
+            raise MatrixE2EEError(
+                ERROR_LOGIN_FAILED, "reauthenticate returned no access token"
+            )
         new_session = session.with_access_token(nio.access_token)
         await asyncio.to_thread(atomic_save_session, self._config_dir, new_session)
         self.session = new_session
@@ -830,7 +838,9 @@ class MatrixE2EEClient:
         self._install_secret_filter()
         await self._query_own_device_keys()
         self.enable_verification_callbacks()
-        _LOGGER.info("matrix_e2ee reauthenticate replaced access token; device unchanged")
+        _LOGGER.info(
+            "matrix_e2ee reauthenticate replaced access token; device unchanged"
+        )
 
     async def async_send_message(self, room_id: str, message: str) -> None:
         """Send text to an allowlisted room. Never falls back to plaintext."""
@@ -840,7 +850,11 @@ class MatrixE2EEClient:
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
         room = _nio_room(nio, room_id)
-        if room is not None and getattr(room, "encrypted", False) and not _olm_ready(nio):
+        if (
+            room is not None
+            and getattr(room, "encrypted", False)
+            and not _olm_ready(nio)
+        ):
             self._emit_error(ERROR_ENCRYPTION_UNAVAILABLE, room_id=room_id)
             raise MatrixE2EEError(
                 ERROR_ENCRYPTION_UNAVAILABLE,
@@ -946,7 +960,9 @@ class MatrixE2EEClient:
 
     def _emit_verification(self, stage: str, **extra: Any) -> None:
         payload = {"stage": stage}
-        payload.update({key: value for key, value in extra.items() if value is not None})
+        payload.update(
+            {key: value for key, value in extra.items() if value is not None}
+        )
         _LOGGER.warning("matrix_e2ee verification %s", payload)
         self._fire_event(EVENT_VERIFICATION, payload)
 
@@ -975,7 +991,9 @@ class MatrixE2EEClient:
             return None
         return verifications.get(transaction_id)
 
-    def _sas_party(self, sas: Any, event: Any | None = None) -> tuple[str | None, str | None]:
+    def _sas_party(
+        self, sas: Any, event: Any | None = None
+    ) -> tuple[str | None, str | None]:
         device = getattr(sas, "other_olm_device", None) if sas is not None else None
         user_id = getattr(device, "user_id", None) or (
             getattr(event, "sender", None) if event is not None else None
@@ -1015,6 +1033,49 @@ class MatrixE2EEClient:
             return False
         return (self._monotonic() - started) >= self._verification_timeout
 
+    def sas_snapshot(self, transaction_id: str) -> dict[str, Any] | None:
+        """Return a read-only view of a SAS transaction for the options flow.
+
+        Never reads ``sas.timed_out`` because that patch mutates ``sas.state``.
+        """
+        nio = self.nio
+        if nio is None:
+            return None
+        sas = self._get_sas(nio, transaction_id)
+        if sas is None:
+            return None
+        user_id, device_id = self._sas_party(sas)
+        return {
+            "transaction_id": transaction_id,
+            "user_id": user_id,
+            "device_id": device_id,
+            "verified": bool(getattr(sas, "verified", False)),
+            "canceled": bool(getattr(sas, "canceled", False)),
+            "emojis": self._sas_emojis(sas),
+        }
+
+    def active_inbound_verification(self) -> dict[str, Any] | None:
+        """Return the first non-terminal inbound SAS snapshot, if any.
+
+        Covers the case where the peer started verification from their client
+        before this options flow was opened.
+        """
+        nio = self.nio
+        if nio is None:
+            return None
+        verifications = getattr(nio, "key_verifications", None)
+        if not isinstance(verifications, dict):
+            return None
+        for transaction_id, sas in verifications.items():
+            if bool(getattr(sas, "we_started_it", False)):
+                continue
+            if bool(getattr(sas, "verified", False)) or bool(
+                getattr(sas, "canceled", False)
+            ):
+                continue
+            return self.sas_snapshot(transaction_id)
+        return None
+
     async def async_start_verification(self, user_id: str, device_id: str) -> str:
         """Start SAS with a known device. Does not mark the device trusted."""
         self._reject_if_soft_logged_out()
@@ -1025,10 +1086,14 @@ class MatrixE2EEClient:
         device = self._lookup_device(nio, user_id, device_id)
         if device is None:
             self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
-            raise MatrixE2EEError(ERROR_DEVICE_MISSING, "device is not in the crypto store")
+            raise MatrixE2EEError(
+                ERROR_DEVICE_MISSING, "device is not in the crypto store"
+            )
         start = getattr(nio, "start_key_verification", None)
         if start is None:
-            self._emit_error(ERROR_ENCRYPTION_UNAVAILABLE, user_id=user_id, device_id=device_id)
+            self._emit_error(
+                ERROR_ENCRYPTION_UNAVAILABLE, user_id=user_id, device_id=device_id
+            )
             raise MatrixE2EEError(
                 ERROR_ENCRYPTION_UNAVAILABLE, "key verification is unavailable"
             )
@@ -1046,8 +1111,12 @@ class MatrixE2EEClient:
             getattr(nio, "key_verifications", {}), user_id, device_id
         )
         if not transaction_id:
-            self._emit_error(ERROR_INVALID_TRANSACTION, user_id=user_id, device_id=device_id)
-            raise MatrixE2EEError(ERROR_INVALID_TRANSACTION, "verification transaction missing")
+            self._emit_error(
+                ERROR_INVALID_TRANSACTION, user_id=user_id, device_id=device_id
+            )
+            raise MatrixE2EEError(
+                ERROR_INVALID_TRANSACTION, "verification transaction missing"
+            )
         self._mark_sas_started(transaction_id)
         self._emit_verification(
             "started",
@@ -1066,7 +1135,9 @@ class MatrixE2EEClient:
         device = self._lookup_device(nio, user_id, device_id)
         if device is None:
             self._emit_error(ERROR_DEVICE_MISSING, user_id=user_id, device_id=device_id)
-            raise MatrixE2EEError(ERROR_DEVICE_MISSING, "device is not in the crypto store")
+            raise MatrixE2EEError(
+                ERROR_DEVICE_MISSING, "device is not in the crypto store"
+            )
         actual = getattr(device, "ed25519", None)
         if not isinstance(actual, str) or actual.strip() != ed25519.strip():
             self._emit_error(
@@ -1098,12 +1169,16 @@ class MatrixE2EEClient:
         sas = self._get_sas(nio, transaction_id)
         if sas is None:
             self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
-            raise MatrixE2EEError(ERROR_INVALID_TRANSACTION, "unknown verification transaction")
+            raise MatrixE2EEError(
+                ERROR_INVALID_TRANSACTION, "unknown verification transaction"
+            )
         confirm = getattr(nio, "confirm_short_auth_string", None) or getattr(
             nio, "confirm_key_verification", None
         )
         if confirm is None:
-            self._emit_error(ERROR_ENCRYPTION_UNAVAILABLE, transaction_id=transaction_id)
+            self._emit_error(
+                ERROR_ENCRYPTION_UNAVAILABLE, transaction_id=transaction_id
+            )
             raise MatrixE2EEError(
                 ERROR_ENCRYPTION_UNAVAILABLE, "key verification is unavailable"
             )
@@ -1144,7 +1219,9 @@ class MatrixE2EEClient:
         sas = self._get_sas(nio, transaction_id)
         if sas is None:
             self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
-            raise MatrixE2EEError(ERROR_INVALID_TRANSACTION, "unknown verification transaction")
+            raise MatrixE2EEError(
+                ERROR_INVALID_TRANSACTION, "unknown verification transaction"
+            )
         user_id, device_id = self._sas_party(sas)
         cancel = getattr(nio, "cancel_key_verification", None)
         if cancel is not None:
@@ -1170,7 +1247,11 @@ class MatrixE2EEClient:
         sas = self._get_sas(nio, transaction_id)
         user_id, device_id = self._sas_party(sas) if sas is not None else (None, None)
         cancel = getattr(nio, "cancel_key_verification", None)
-        if cancel is not None and sas is not None and not bool(getattr(sas, "canceled", False)):
+        if (
+            cancel is not None
+            and sas is not None
+            and not bool(getattr(sas, "canceled", False))
+        ):
             try:
                 await _maybe_await(cancel(transaction_id, reject=False))
             except Exception:  # noqa: BLE001 — timeout path still reports timeout
@@ -1253,7 +1334,9 @@ class MatrixE2EEClient:
             _LOGGER.warning("matrix_e2ee request: missing sender; ignoring")
             return
         if not self._bootstrap_allowed(sender):
-            _LOGGER.warning("matrix_e2ee request: sender %s not allowed; ignoring", sender)
+            _LOGGER.warning(
+                "matrix_e2ee request: sender %s not allowed; ignoring", sender
+            )
             return
         if not isinstance(content, dict):
             _LOGGER.warning("matrix_e2ee request: content missing; ignoring")
@@ -1376,7 +1459,9 @@ class MatrixE2EEClient:
                 try:
                     await _maybe_await(accept(transaction_id))
                 except Exception:  # noqa: BLE001 — fail closed without trusting
-                    self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
+                    self._emit_error(
+                        ERROR_INVALID_TRANSACTION, transaction_id=transaction_id
+                    )
                     return
             self._mark_sas_started(transaction_id)
             user_id, device_id = self._sas_party(sas, event)
@@ -1522,4 +1607,3 @@ def _send_error_code(err: Any) -> str:
     if "encryption" in name or "olm" in name or "olm" in text:
         return ERROR_ENCRYPTION_UNAVAILABLE
     return ERROR_SEND_FAILED
-
