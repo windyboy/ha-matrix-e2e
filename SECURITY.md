@@ -16,7 +16,7 @@ Device verification remains service/event-based in v0.2 (`start_verification` / 
 
 1. Log in to the bot account in Element. This device becomes the admin/bootstrap device.
 2. Bootstrap the bot's cross-signing identity in Element.
-3. Start the server bot; it creates its device (`BOT_SERVER_01`) and uploads device keys.
+3. Start the server bot; it creates its device (`BOT_SERVER_01` is an example identifier — the actual device display name is `Home Assistant matrix_e2ee`, `const.py` `DEVICE_NAME`, with a server-generated random device ID) and uploads device keys.
 4. In Element, open the bot account's Sessions and verify `BOT_SERVER_01`.
 5. Compare the SAS emojis on both sides, then call `matrix_e2ee.confirm_verification` from Home Assistant. Only this explicit step marks the device verified.
 6. Element cross-signs `BOT_SERVER_01`, which then shows as verified.

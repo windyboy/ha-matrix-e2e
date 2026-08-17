@@ -14,6 +14,8 @@
 - **cross-signing 身份**：只放在 Element 里，代表「这个账号归谁管」。
 - **设备密钥**：Home Assistant 里的机器人设备 `BOT_SERVER_01` 自己的一把钥匙。
 
+> 说明：`BOT_SERVER_01` 只是本文的示例标识。实际部署里，机器人设备的**显示名**是 `Home Assistant matrix_e2ee`（`const.py` 的 `DEVICE_NAME`），设备 ID 由服务器随机生成，请在 Element 会话列表里按这个显示名找。
+
 验证 = 让 Element 确认 `BOT_SERVER_01` 这把钥匙可信。确认方式是一串 emoji（像配对蓝牙设备那样）。
 
 ## 第 0 步（一辈子只做一次）：建立账号身份
