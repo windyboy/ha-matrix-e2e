@@ -124,6 +124,8 @@
 | `_patch_nio_sas_timeout()` | monkeypatch `Sas.timed_out`，忽略 nio 失效的 60s 事件超时（`_last_event_time` 从不刷新），只保留 5min 总超时 |
 | `enable_verification_callbacks()` | 注册 `handle_to_device_event` 到 `add_to_device_callback` |
 | `handle_to_device_event()` | 集成回调，处理 `start` / `key` / `mac` / `cancel`（**不处理 `accept`**） |
+| `_handle_verification_request()` / `_send_verification_ready()` | 桥接 `m.key.verification.request → ready`（nio 0.26 缺框架）；校验 sender/txn/methods/timestamp 后回 `ready` |
+| `_send_verification_done()` | 补发 `m.key.verification.done`（nio 0.26 无 done 支持），Element 从 `WaitingForDone` 转 `Done` |
 | `async_start_verification()` / `async_confirm_verification()` / `async_cancel_verification()` | 面向 HA 服务的三个入口 |
 
 ### 方向 A：Element 发起（peer-initiated，bot 是接受方，`we_started_it=False`）
