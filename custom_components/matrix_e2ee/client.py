@@ -592,7 +592,7 @@ class MatrixE2EEClient:
         self._first_setup = True
         self._install_secret_filter()
         await self._upload_keys_if_needed()
-        _LOGGER.warning(
+        _LOGGER.info(
             "matrix_e2ee first login succeeded; user=%s device=%s; session stored",
             nio.user_id,
             nio.device_id,
@@ -639,7 +639,7 @@ class MatrixE2EEClient:
         self._first_setup = False
         self._install_secret_filter()
         await self._upload_keys_if_needed()
-        _LOGGER.warning(
+        _LOGGER.info(
             "matrix_e2ee restored existing device; user=%s device=%s",
             nio.user_id,
             nio.device_id,
@@ -965,7 +965,7 @@ class MatrixE2EEClient:
         payload.update(
             {key: value for key, value in extra.items() if value is not None}
         )
-        _LOGGER.warning("matrix_e2ee verification %s", payload)
+        _LOGGER.info("matrix_e2ee verification %s", payload)
         self._fire_event(EVENT_VERIFICATION, payload)
 
     def _verification_expires_at(self) -> str:
@@ -1114,7 +1114,7 @@ class MatrixE2EEClient:
         """Start SAS with a known device. Does not mark the device trusted."""
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
-        _LOGGER.warning(
+        _LOGGER.info(
             "matrix_e2ee start_verification user=%s device=%s", user_id, device_id
         )
         device = self._lookup_device(nio, user_id, device_id)
@@ -1196,7 +1196,7 @@ class MatrixE2EEClient:
         """Confirm SAS emojis match. This is the only path that verifies a device."""
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
-        _LOGGER.warning("matrix_e2ee confirm_verification txn=%s", transaction_id)
+        _LOGGER.info("matrix_e2ee confirm_verification txn=%s", transaction_id)
         if self._sas_is_timed_out(nio, transaction_id):
             await self._timeout_verification(nio, transaction_id)
             raise MatrixE2EEError(ERROR_VERIFICATION_TIMEOUT, "verification timed out")
@@ -1250,7 +1250,7 @@ class MatrixE2EEClient:
         """Cancel an in-progress SAS. Does not verify the device."""
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
-        _LOGGER.warning("matrix_e2ee cancel_verification txn=%s", transaction_id)
+        _LOGGER.info("matrix_e2ee cancel_verification txn=%s", transaction_id)
         sas = self._get_sas(nio, transaction_id)
         if sas is None:
             self._emit_error(ERROR_INVALID_TRANSACTION, transaction_id=transaction_id)
@@ -1356,7 +1356,7 @@ class MatrixE2EEClient:
         transaction_id = content.get("transaction_id") if content is not None else None
         methods = content.get("methods") if content is not None else None
         timestamp = content.get("timestamp") if content is not None else None
-        _LOGGER.warning(
+        _LOGGER.info(
             "matrix_e2ee request received: sender=%s from_device=%s txn=%s "
             "methods=%s ts=%s",
             sender,
@@ -1366,7 +1366,7 @@ class MatrixE2EEClient:
             timestamp,
         )
         if not isinstance(sender, str) or not sender:
-            _LOGGER.warning("matrix_e2ee request: missing sender; ignoring")
+            _LOGGER.debug("matrix_e2ee request: missing sender; ignoring")
             return
         if not self._bootstrap_allowed(sender):
             _LOGGER.warning(
@@ -1374,25 +1374,25 @@ class MatrixE2EEClient:
             )
             return
         if not isinstance(content, dict):
-            _LOGGER.warning("matrix_e2ee request: content missing; ignoring")
+            _LOGGER.debug("matrix_e2ee request: content missing; ignoring")
             return
         if not isinstance(from_device, str) or not from_device:
-            _LOGGER.warning("matrix_e2ee request: missing from_device; ignoring")
+            _LOGGER.debug("matrix_e2ee request: missing from_device; ignoring")
             return
         if not isinstance(transaction_id, str) or not transaction_id:
-            _LOGGER.warning("matrix_e2ee request: missing transaction_id; ignoring")
+            _LOGGER.debug("matrix_e2ee request: missing transaction_id; ignoring")
             return
         if (
             not isinstance(methods, list)
             or not all(isinstance(method, str) for method in methods)
             or SAS_METHOD_V1 not in methods
         ):
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "matrix_e2ee request: unsupported methods %s; ignoring", methods
             )
             return
         if not _request_timestamp_valid(timestamp):
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "matrix_e2ee request: invalid timestamp %s; ignoring", timestamp
             )
             return
@@ -1422,7 +1422,7 @@ class MatrixE2EEClient:
         except Exception:  # noqa: BLE001 — never crash the to-device handler
             _LOGGER.warning("matrix_e2ee failed to send verification ready")
             return
-        _LOGGER.warning(
+        _LOGGER.info(
             "matrix_e2ee request: replied ready to %s device %s txn=%s",
             sender,
             from_device,
@@ -1467,7 +1467,7 @@ class MatrixE2EEClient:
                 "matrix_e2ee failed to send verification done txn=%s", transaction_id
             )
             return
-        _LOGGER.warning(
+        _LOGGER.info(
             "matrix_e2ee sent done to %s device %s txn=%s",
             user_id,
             device_id,
@@ -1487,7 +1487,7 @@ class MatrixE2EEClient:
         transaction_id = getattr(event, "transaction_id", None)
         if not isinstance(transaction_id, str) or not transaction_id:
             return
-        _LOGGER.warning(
+        _LOGGER.info(
             "matrix_e2ee to_device kind=%s txn=%s sender=%s from_device=%s",
             kind,
             transaction_id,
@@ -1505,7 +1505,7 @@ class MatrixE2EEClient:
             sas = self._get_sas(nio, transaction_id)
             user_id, device_id = self._sas_party(sas, event)
             self._sas_started_at.pop(transaction_id, None)
-            _LOGGER.warning(
+            _LOGGER.info(
                 "matrix_e2ee verification canceled txn=%s sender=%s code=%s reason=%s",
                 transaction_id,
                 getattr(event, "sender", None),
