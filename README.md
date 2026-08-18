@@ -21,7 +21,7 @@ Copy only the `matrix_e2ee` package into `custom_components`. The GitHub reposit
 
 **From a release archive** (recommended):
 
-1. Download the source zip of the latest release: https://github.com/windyboy/ha-matrix-e2e/releases
+1. Download the source zip of the latest release: https://github.com/windyboy/ha-matrix-e2ee/releases
 2. Extract it, then copy `custom_components/matrix_e2ee` to the HA config directory:
 
 ```bash
@@ -29,12 +29,12 @@ mkdir -p /config/custom_components
 cp -a custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
 
-**From git** (replace `v0.2.0` with the [release tag](https://github.com/windyboy/ha-matrix-e2e/releases) you want):
+**From git** (replace `v0.2.0` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
 
 ```bash
-git clone --depth 1 --branch v0.2.0 https://github.com/windyboy/ha-matrix-e2e.git /tmp/ha-matrix-e2e
+git clone --depth 1 --branch v0.2.0 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
 mkdir -p /config/custom_components
-cp -a /tmp/ha-matrix-e2e/custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
+cp -a /tmp/ha-matrix-e2ee/custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
 
 The installed tree must be:
@@ -204,10 +204,10 @@ This integration does not rotate refresh tokens. If login or `reauthenticate` wo
 
 | Milestone | Intent | Status |
 |---|---|---|
-| **M1** | Independent YAML integration, unencrypted-room send/commands, allowlist, startup/shutdown, mock tests | Released ([#2](https://github.com/windyboy/ha-matrix-e2e/pull/2)) |
-| **M2** | E2EE lifecycle: first login writes a full crypto device, restart restores the same device, encrypted text path, fail-closed unverified send/commands | Released ([#4](https://github.com/windyboy/ha-matrix-e2e/pull/4)) |
-| **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Released ([#5](https://github.com/windyboy/ha-matrix-e2e/pull/5)) |
-| **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Released ([#6](https://github.com/windyboy/ha-matrix-e2e/pull/6)) |
+| **M1** | Independent YAML integration, unencrypted-room send/commands, allowlist, startup/shutdown, mock tests | Released ([#2](https://github.com/windyboy/ha-matrix-e2ee/pull/2)) |
+| **M2** | E2EE lifecycle: first login writes a full crypto device, restart restores the same device, encrypted text path, fail-closed unverified send/commands | Released ([#4](https://github.com/windyboy/ha-matrix-e2ee/pull/4)) |
+| **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Released ([#5](https://github.com/windyboy/ha-matrix-e2ee/pull/5)) |
+| **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Released ([#6](https://github.com/windyboy/ha-matrix-e2ee/pull/6)) |
 | **M5** | Config Flow migration: UI setup, options / reconfigure / reauth flows, YAML import, tests | Released (v0.2.0) |
 
 M1 acceptance uses unencrypted test rooms. The first successful login still creates a full E2EE-capable Matrix device so M2 does not “upgrade” a non-crypto device.
