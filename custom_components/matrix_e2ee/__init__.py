@@ -265,9 +265,7 @@ else:
         )
         return True
 
-    async def async_setup_entry(
-        hass: HomeAssistant, entry: ConfigEntry
-    ) -> bool:
+    async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Set up matrix_e2ee from a config entry."""
         options = _options(entry)
         client = MatrixE2EEClient(
@@ -316,12 +314,12 @@ else:
         entry.async_on_unload(
             hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
         )
+        await hass.config_entries.async_forward_entry_setups(entry, ["binary_sensor"])
         return True
 
-    async def async_unload_entry(
-        hass: HomeAssistant, entry: ConfigEntry
-    ) -> bool:
+    async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Unload a config entry."""
+        await hass.config_entries.async_unload_platforms(entry, ["binary_sensor"])
         client = hass.data.setdefault(DOMAIN, {}).pop(entry.entry_id, None)
         if client is not None:
             await client.async_stop()

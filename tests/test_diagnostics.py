@@ -6,7 +6,6 @@ import pytest
 
 from homeassistant.core import HomeAssistant
 
-from custom_components.matrix_e2ee import async_setup_entry, async_unload_entry
 import custom_components.matrix_e2ee as matrix_e2ee
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
 from custom_components.matrix_e2ee.const import CONF_HOMESERVER, CONF_USERNAME, DOMAIN
@@ -76,7 +75,8 @@ async def test_diagnostics_returns_redacted_snapshot(
     await _seed_session(tmp_path)
     entry = _make_entry(hass)
 
-    assert await async_setup_entry(hass, entry) is True
+    assert await hass.config_entries.async_setup(entry.entry_id) is True
+    await hass.async_block_till_done()
 
     result = await async_get_config_entry_diagnostics(hass, entry)
 
@@ -92,4 +92,4 @@ async def test_diagnostics_returns_redacted_snapshot(
     assert result["client"]["session_present"] is True
     assert result["client"]["encryption_enabled"] is True
 
-    await async_unload_entry(hass, entry)
+    await hass.config_entries.async_unload(entry.entry_id)

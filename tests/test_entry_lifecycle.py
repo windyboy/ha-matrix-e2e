@@ -7,9 +7,7 @@ import asyncio
 import pytest
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from custom_components.matrix_e2ee import async_setup_entry, async_unload_entry
 import custom_components.matrix_e2ee as matrix_e2ee
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
 from custom_components.matrix_e2ee.const import (
@@ -80,14 +78,15 @@ async def test_setup_entry_registers_services_and_starts_sync(
     await _seed_session(tmp_path)
     entry = _make_entry(hass)
 
-    assert await async_setup_entry(hass, entry) is True
+    assert await hass.config_entries.async_setup(entry.entry_id) is True
+    await hass.async_block_till_done()
 
     client = hass.data[DOMAIN][entry.entry_id]
     assert client._sync_task is not None
     assert hass.services.has_service(DOMAIN, SERVICE_SEND_MESSAGE)
     assert hass.services.has_service(DOMAIN, SERVICE_REAUTHENTICATE)
 
-    assert await async_unload_entry(hass, entry) is True
+    assert await hass.config_entries.async_unload(entry.entry_id) is True
     assert entry.entry_id not in hass.data.get(DOMAIN, {})
     assert not hass.services.has_service(DOMAIN, SERVICE_SEND_MESSAGE)
 
@@ -105,8 +104,7 @@ async def test_setup_entry_soft_logout_raises_auth_failed(
     monkeypatch.setattr(matrix_e2ee, "_NIO_CLIENT_FACTORY", soft_factory)
     entry = _make_entry(hass)
 
-    with pytest.raises(ConfigEntryAuthFailed):
-        await async_setup_entry(hass, entry)
+    assert await hass.config_entries.async_setup(entry.entry_id) is False
 
     # The client stays reachable so the reauth flow can reauthenticate it.
     client = hass.data[DOMAIN][entry.entry_id]
@@ -121,7 +119,7 @@ async def test_sync_loop_is_background_task(
     await _seed_session(tmp_path)
     entry = _make_entry(hass)
 
-    assert await async_setup_entry(hass, entry) is True
+    assert await hass.config_entries.async_setup(entry.entry_id) is True
 
     client = hass.data[DOMAIN][entry.entry_id]
     assert client._sync_task is not None
@@ -130,4 +128,4 @@ async def test_sync_loop_is_background_task(
     # for the full startup timeout. A background task must not.
     await asyncio.wait_for(hass.async_block_till_done(), timeout=1)
 
-    assert await async_unload_entry(hass, entry) is True
+    assert await hass.config_entries.async_unload(entry.entry_id) is True
