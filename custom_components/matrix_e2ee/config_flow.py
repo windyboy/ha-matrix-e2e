@@ -28,6 +28,7 @@ from .const import (
     CONF_ALLOWED_USERS,
     CONF_COMMAND_PREFIX,
     CONF_HOMESERVER,
+    CONF_VERIFICATION_PEER_USERS,
     DEFAULT_COMMAND_PREFIX,
     DOMAIN,
     ERROR_LOGIN_FAILED,
@@ -130,6 +131,9 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
             options={
                 CONF_ALLOWED_ROOMS: import_info.get(CONF_ALLOWED_ROOMS, []),
                 CONF_ALLOWED_USERS: import_info.get(CONF_ALLOWED_USERS, []),
+                CONF_VERIFICATION_PEER_USERS: import_info.get(
+                    CONF_VERIFICATION_PEER_USERS, []
+                ),
                 CONF_COMMAND_PREFIX: import_info.get(
                     CONF_COMMAND_PREFIX, DEFAULT_COMMAND_PREFIX
                 ),
@@ -191,6 +195,7 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
             password=user_input.get(CONF_PASSWORD),
             allowed_rooms=[],
             allowed_users=[],
+            verification_peer_users=[],
             command_prefix=DEFAULT_COMMAND_PREFIX,
             fire_event=lambda event_type, data: None,
             nio_client_factory=_NIO_CLIENT_FACTORY,
@@ -231,12 +236,15 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
     async def async_step_access_controls(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit allowed_rooms / allowed_users / command_prefix."""
+        """Edit allowed_rooms / allowed_users / verification_peer_users / command_prefix."""
         if user_input is not None:
             result = self.async_create_entry(
                 data={
                     CONF_ALLOWED_ROOMS: _csv_to_list(user_input[CONF_ALLOWED_ROOMS]),
                     CONF_ALLOWED_USERS: _csv_to_list(user_input[CONF_ALLOWED_USERS]),
+                    CONF_VERIFICATION_PEER_USERS: _csv_to_list(
+                        user_input[CONF_VERIFICATION_PEER_USERS]
+                    ),
                     CONF_COMMAND_PREFIX: user_input[CONF_COMMAND_PREFIX],
                 }
             )
@@ -257,6 +265,10 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
                     vol.Optional(
                         CONF_ALLOWED_USERS,
                         default=",".join(options.get(CONF_ALLOWED_USERS, [])),
+                    ): cv.string,
+                    vol.Optional(
+                        CONF_VERIFICATION_PEER_USERS,
+                        default=",".join(options.get(CONF_VERIFICATION_PEER_USERS, [])),
                     ): cv.string,
                     vol.Optional(
                         CONF_COMMAND_PREFIX,

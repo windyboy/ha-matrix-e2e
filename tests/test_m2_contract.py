@@ -52,6 +52,7 @@ def _client(tmp_path: Path, fire, factory, password="pw", rooms=None, users=None
         password=password,
         allowed_rooms=rooms if rooms is not None else [ROOM],
         allowed_users=users if users is not None else [USER],
+        verification_peer_users=[],
         command_prefix="!",
         fire_event=fire,
         nio_client_factory=factory,
@@ -430,7 +431,9 @@ async def test_logger_redacts_token_pickle_and_never_logs_body(tmp_path, caplog)
     with pytest.raises(MatrixE2EEError):
         await client.async_send_message(ROOM, SECRET_BODY)
 
-    client_mod._LOGGER.error("probe token=%s pickle=%s body=%s", token, pickle_key, SECRET_BODY)
+    client_mod._LOGGER.error(
+        "probe token=%s pickle=%s body=%s", token, pickle_key, SECRET_BODY
+    )
     text = "\n".join(record.getMessage() for record in caplog.records)
     assert token not in text
     assert pickle_key not in text

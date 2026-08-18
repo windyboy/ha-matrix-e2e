@@ -10,6 +10,7 @@ CONF_PASSWORD = "password"
 CONF_ALLOWED_ROOMS = "allowed_rooms"
 CONF_ALLOWED_USERS = "allowed_users"
 CONF_COMMAND_PREFIX = "command_prefix"
+CONF_VERIFICATION_PEER_USERS = "verification_peer_users"
 
 DEFAULT_COMMAND_PREFIX = "!"
 

@@ -43,6 +43,7 @@ async def _seed_session(tmp_path) -> None:
         password="pw",
         allowed_rooms=[],
         allowed_users=[],
+        verification_peer_users=[],
         command_prefix="!",
         fire_event=lambda event_type, data: None,
         nio_client_factory=FakeNio,

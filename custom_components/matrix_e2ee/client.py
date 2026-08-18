@@ -468,6 +468,7 @@ class MatrixE2EEClient:
         password: str | None,
         allowed_rooms: list[str],
         allowed_users: list[str],
+        verification_peer_users: list[str],
         command_prefix: str,
         fire_event: Callable[[str, dict[str, Any]], None],
         nio_client_factory: NioClientFactory | None = None,
@@ -478,6 +479,7 @@ class MatrixE2EEClient:
         self._password = password
         self.allowed_rooms = list(allowed_rooms)
         self.allowed_users = list(allowed_users)
+        self.verification_peer_users = list(verification_peer_users)
         self.command_prefix = command_prefix
         self._fire_event = fire_event
         self._nio_client_factory = nio_client_factory
@@ -1310,13 +1312,13 @@ class MatrixE2EEClient:
         )
 
     def _bootstrap_allowed(self, sender: str | None) -> bool:
-        """Only the bot's own account or allowlisted users may drive SAS."""
+        """Only the bot's own account or verification peers may drive SAS."""
         if not isinstance(sender, str) or not sender:
             return False
         session = self.session
         if session is not None and sender == session.user_id:
             return True
-        return user_allowed(sender, self.allowed_users)
+        return user_allowed(sender, self.verification_peer_users)
 
     async def _repair_dropped_start(
         self, nio: Any, event: Any, transaction_id: str

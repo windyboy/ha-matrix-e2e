@@ -55,11 +55,13 @@
         "data": {
           "allowed_rooms": "Allowed rooms",
           "allowed_users": "Allowed users",
+          "verification_peer_users": "Verification peer users",
           "command_prefix": "Command prefix"
         },
         "data_description": {
           "allowed_rooms": "Comma-separated room IDs. Empty means no send and no inbound commands.",
           "allowed_users": "Comma-separated user IDs. Empty means no inbound commands.",
+          "verification_peer_users": "Comma-separated user IDs allowed to initiate device verification (SAS). Empty means only the bot's own account.",
           "command_prefix": "Single character prefix that starts a command."
         }
       },
