@@ -139,7 +139,8 @@
 | 5 | — | 集成 `handle_to_device_event("key")` | 发 `stage: sas`（含 emoji） |
 | 6 | 用户调 `confirm_verification` | 集成 `async_confirm_verification` | `confirm_short_auth_string()` → `accept_sas()` + `get_mac()`，发 bot 的 `mac` |
 | 7 | `mac`（Element → bot） | nio `handle_key_verification` | `receive_mac_event()` 校验，`verified` → `verify_device()` |
-| 8 | — | 集成 `handle_to_device_event("mac")` | `verified` 为真 → 发 `stage: done` |
+| 8 | — | 集成 `handle_to_device_event("mac")` | `verified` 为真 → 补发 `m.key.verification.done`（to-device）+ 发 `stage: done` |
+| 9 | `done`（bot → Element） | Element | 收到 `done` 从 `WaitingForDone` 转 `Done`，验证完成 |
 
 ### 方向 B：机器人发起（bot-initiated，`we_started_it=True`）
 
@@ -151,7 +152,7 @@
 | 4 | — | 集成 `handle_to_device_event("key")` | 发 `stage: sas` |
 | 5 | 用户调 `confirm_verification` | 集成 `async_confirm_verification` | `confirm_short_auth_string()` 发 `mac` |
 | 6 | `mac`（Element → bot） | nio `handle_key_verification` | `receive_mac_event()` → `verify_device()` |
-| 7 | — | 集成 `handle_to_device_event("mac")` | `verified` → 发 `stage: done` |
+| 7 | — | 集成 `handle_to_device_event("mac")` | `verified` → 补发 `m.key.verification.done` + 发 `stage: done`（start 流下 Element 安全忽略 done） |
 
 ### 关键事实
 
@@ -159,9 +160,11 @@
 - **集成不处理 `accept`**：`_verification_kind()` 只映射 `start/key/mac/cancel`，`accept` 由 nio 内部状态机自动处理（方向 B 的 #2）。
 - **key 的发送归 nio 管**：无论哪个方向，bot 的 `key` 都由 nio 内部 `share_key()` 入队、`sync_forever` 发出；集成**不应**手动 `share_key`。
 - **mac 只由 `confirm_verification` 服务发送一次**：`confirm_short_auth_string()` 内部已 `accept_sas()` + `get_mac()`。
+- **done 由集成在 `sas.verified` 变 True 时补发**：matrix-nio 0.26.0 无 `m.key.verification.done` 支持，request 流下 Element 收到 MAC 后进入 `WaitingForDone` 等待 HA 的 `done`。集成 `_send_verification_done()` 在两处（`async_confirm_verification` verified 分支 + `handle_to_device_event` mac 分支）无条件补发；start 流下 Element 走 `Done` 态无 `done` 转移，安全忽略。
 - **已知问题（见对应 issue）**：
   - **W1N-169**：~~当前实现对 key 和 mac 各多发一次（方向 A 中集成手动 `share_key`、`mac` handler 里 `_try_confirm` 重复发 mac）。~~ 已修复：key 由 nio 内部状态机在收到 peer key 时统一发送，mac 仅由 `confirm_verification` 发送。
   - **W1N-170**：~~bot 上线后才新增的设备，第一次 SAS 的 `start` 会被 nio 丢弃（"unknown device"），需重试一次。~~ 已修复：`_repair_dropped_start()` 在收到未知设备的 `start` 时自动查 key 并重喂，无需手动重试。
   - **W1N-172**：~~nio 0.26.0 的 `Sas._last_event_time` 从不刷新，SAS 在创建 60s 后必然超时（即使人还在比对 emoji）。~~ 已修复：`_patch_nio_sas_timeout()` monkeypatch `timed_out` 忽略失效的 60s 事件超时，只保留 5min 总超时；集成自己的超时对齐为 4min。
-  - **W1N-173**：~~matrix-nio 0.26.0 缺 `request`/`ready` 握手，Element 的验证请求在第一步就被丢弃，最终只收到 `cancel`。~~ 已修复（P0）：`_handle_verification_request()` 校验 request 并回 `ready`，让 Element 继续发 `start`。P1（`m.key.verification.done`）后续完善。
+  - **W1N-173**：~~matrix-nio 0.26.0 缺 `request`/`ready` 握手，Element 的验证请求在第一步就被丢弃，最终只收到 `cancel`。~~ 已修复（P0）：`_handle_verification_request()` 校验 request 并回 `ready`，让 Element 继续发 `start`。
+  - **W1N-183**：~~matrix-nio 0.26.0 无 `m.key.verification.done` 支持，request 流在 MAC 交换后 Element 卡在 `WaitingForDone` 等不到 HA 的 `done` 直到超时。~~ 已修复：`_send_verification_done()` 在 `sas.verified` 变 True 时补发 `done`，Element 完成最后一步。
   - **W1N-171**：SAS 全链路从未在真实 Matrix homeserver 上做过端到端验证（现有测试全用 FakeNio）。暂缓解决。

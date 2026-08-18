@@ -119,6 +119,7 @@ commitment 后才发自己的公钥。攻击者只有一次猜的机会：验证
 | 7 | `keys_query` 应覆盖会话各方 | 只取「共享加密房间用户」→ bot 与自身设备不共享房间 → **永不查询自己** → 入站 SAS 建不起来 | 登录/恢复后把自身 `user_id` 加进 `users_for_key_query` 并预热 | W1N-166, PR #18 |
 | 8 | 收到 start 前应有设备 key | 新设备首次 start 命中 device_store KeyError → 丢弃 + 不建 SAS | `_repair_dropped_start`：查 key 后把同一 start 重喂给 `nio.olm.handle_key_verification` | W1N-170, PR #23 |
 | 9 | 校验失败应发 `m.key_mismatch` cancel | `receive_mac_event`「无已验证设备」分支置 canceled 后**缺 return**，下一行覆盖为 `mac_received` | 上游 bug，**Backlog**（W1N-179） | W1N-179 |
+| 10 | request 流 MAC 后双方互发 `done` 收尾 | **没有实现**；done 既不发送也不解析（`to_device.py` 只分发 start/accept/key/mac/cancel）→ Element 卡在 `WaitingForDone` 直到超时 | 集成 `_send_verification_done`：`sas.verified` 变 True 时补发 `done`（content 仅 `transaction_id`；无条件发，start 流被 Element 安全忽略） | W1N-183 |
 
 另：nio 的 `Sas.verified = (state == mac_received) ∧ sas_accepted`，`get_mac()` 在 `sas_accepted=False` 时抛
 `LocalProtocolError`——集成代码曾因裸调 get_mac 被 `except Exception` 吞掉而卡死（W1N-142）。
@@ -173,6 +174,8 @@ Element                      HA bot (matrix_e2ee)
    │                                                    = accept_sas + get_mac + (verified→verify_device)
    │ ◄──────────────────────────────────────────────  m.key.verification.mac（只发一次, W1N-169）
    │  m.key.verification.mac → (mac 分支) sas.verified → emit done
+   │ ◄──────────────────────────────────────────────  m.key.verification.done（_send_verification_done, W1N-183）
+   │  m.key.verification.done → Element 从 WaitingForDone 转 Done，验证完成
 ```
 
 **方向 B：bot 发起（出站）** — `start_verification(user_id, device_id)` → `nio.start_key_verification(device)` 发出
@@ -231,7 +234,8 @@ start；后续 accept/key/emoji 同方向 A；比对后同样 `confirm_verificat
 | `_repair_dropped_start` | 1196 | `_query_device_keys(sender)` 后重喂 `nio.olm.handle_key_verification(event)`（W1N-170） |
 | `_handle_verification_request` | 1222 | 解析 request；校验 sender/txn/methods/timestamp → `_send_verification_ready`；**不建 SAS 状态**（W1N-173） |
 | `_send_verification_ready` | 1283 | 回 `ready` {from_device: own, methods:[m.sas.v1], transaction_id} |
-| `handle_to_device_event` | 1314 | 主分发：门控→cancel→timeout→start（emoji 检查/repair/accept/emit）→key（emit sas）→mac（verified→emit done） |
+| `_send_verification_done` | 1301 | 回 `done` {transaction_id}（无条件发；request 流下 Element 从 `WaitingForDone` 转 `Done`，start 流安全忽略）（W1N-183） |
+| `handle_to_device_event` | 1314 | 主分发：门控→cancel→timeout→start（emoji 检查/repair/accept/emit）→key（emit sas）→mac（verified→发 done→emit done） |
 | `_verification_kind` | 1458 | 类名/type 串 → start/key/mac/cancel |
 | `_request_timestamp_valid` | 1447 | 未来≤5min 且 age≤10min |
 | `_transaction_id_from_verifications` | 1480 | 匹配 other user+device；唯一则兜底 |

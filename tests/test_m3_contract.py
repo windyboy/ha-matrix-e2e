@@ -117,6 +117,15 @@ def _sent_readies(nio):
     ]
 
 
+def _sent_dones(nio):
+    return [
+        s["message"]
+        for s in nio.to_device_sent
+        if s["op"] == "to_device"
+        and getattr(s["message"], "type", None) == "m.key.verification.done"
+    ]
+
+
 def _factory_holder():
     created: dict[str, FakeNio] = {}
 
@@ -840,6 +849,44 @@ async def test_request_replies_ready_then_sas_flow(tmp_path, monkeypatch):
     assert any(
         item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done" for item in events
     )
+    assert nio.device_store[USER][PEER_DEVICE].verified is True
+    # The wire `done` concludes the request-based flow for Element.
+    dones = _sent_dones(nio)
+    assert len(dones) == 1
+    assert dones[0].recipient == USER
+    assert dones[0].recipient_device == PEER_DEVICE
+    assert dones[0].content == {"transaction_id": TXN}
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_confirm_sends_done_after_peer_mac(tmp_path, monkeypatch):
+    """Case B: the peer MAC arrives before the user confirms, so `done` is sent
+    from `async_confirm_verification` (the other verified branch)."""
+    factory, created = _factory_holder()
+    events = []
+    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    nio.key_verifications[TXN] = FakeSas(TXN, USER, PEER_DEVICE, we_started_it=False)
+
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+    await client.handle_to_device_event(KeyVerificationKey(USER, TXN))
+
+    # Peer MAC arrives before the user confirms → not verified yet, no `done`.
+    nio.receive_verification_mac(TXN)
+    await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
+    assert _sent_dones(nio) == []
+
+    # The user confirms → the SAS becomes verified and `done` is sent.
+    await client.async_confirm_verification(TXN)
+    dones = _sent_dones(nio)
+    assert len(dones) == 1
+    assert dones[0].recipient == USER
+    assert dones[0].recipient_device == PEER_DEVICE
+    assert dones[0].content == {"transaction_id": TXN}
     assert nio.device_store[USER][PEER_DEVICE].verified is True
     await client.async_stop()
 
