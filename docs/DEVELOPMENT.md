@@ -20,6 +20,12 @@ These tests mock `nio.AsyncClient`; the flow/lifecycle tests use the Home Assist
 
 M1 contract: `tests/test_m1_contract.py`. M2 contract: `tests/test_m2_contract.py`. M3 contract: `tests/test_m3_contract.py`. M4 contract: `tests/test_m4_contract.py`. Config Flow: `tests/test_config_flow.py`, `tests/test_reauth.py`, `tests/test_options_flow.py`, `tests/test_import.py`, `tests/test_entry_lifecycle.py`, `tests/test_manifest.py`. SAS MAC patch: `tests/test_sas_mac_patch.py`. Shared fake client: `tests/fakes.py`.
 
+## nio compatibility
+
+The integration applies four runtime patches to `matrix-nio` 0.26.0 `Sas` for
+Element SAS interoperability. See [NIO_COMPAT.md](NIO_COMPAT.md) for the patch
+matrix and the upgrade checklist before bumping `matrix-nio`.
+
 ## Local layout
 
 Copy `custom_components/matrix_e2ee` into `<config>/custom_components/matrix_e2ee` on a Home Assistant instance. Configure via the Config Flow UI (**Settings → Devices & Services → Add Integration → Matrix E2EE**). A leftover `matrix_e2ee:` YAML block is imported into a config entry on startup.
