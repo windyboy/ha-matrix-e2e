@@ -1055,6 +1055,33 @@ class MatrixE2EEClient:
             "emojis": self._sas_emojis(sas),
         }
 
+    def latest_sas_snapshot(self) -> dict[str, Any] | None:
+        """Return the newest active SAS snapshot for the options flow.
+
+        Skips verified/canceled transactions so a finished verification is not
+        mistaken for a new one. Never reads ``sas.timed_out`` (mutates state).
+        """
+        nio = self.nio
+        if nio is None:
+            return None
+        verifications = getattr(nio, "key_verifications", None)
+        if not isinstance(verifications, dict) or not verifications:
+            return None
+        active: list[dict[str, Any]] = []
+        for transaction_id in verifications:
+            snapshot = self.sas_snapshot(str(transaction_id))
+            if snapshot is None or snapshot["verified"] or snapshot["canceled"]:
+                continue
+            active.append(snapshot)
+        if not active:
+            return None
+        return max(
+            active,
+            key=lambda snapshot: self._sas_started_at.get(
+                snapshot["transaction_id"], 0
+            ),
+        )
+
     def list_known_devices(self) -> list[dict[str, Any]]:
         """Return known devices from the crypto store, excluding the bot's own device."""
         nio = self.nio

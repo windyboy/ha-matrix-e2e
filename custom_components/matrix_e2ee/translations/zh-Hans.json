@@ -47,10 +47,7 @@
       },
       "verify_device": {
         "title": "验证设备",
-        "description": "选择要验证的设备。将启动 SAS 验证并显示需要比对的 emoji。",
-        "data": {
-          "device": "设备"
-        }
+        "description": "在你的 Matrix 客户端（Element）中打开 设置 → 会话，选择「Home Assistant matrix_e2ee」，点击 验证。此窗口会自动等待验证开始，并显示需要比对的 emoji。"
       },
       "access_controls": {
         "title": "访问控制",
@@ -76,12 +73,11 @@
       }
     },
     "progress": {
-      "wait_peer": "正在等待对方设备接受验证。",
+      "wait_inbound": "正在等待对方设备发起验证。在 Element 中：设置 → 会话 → 验证「Home Assistant matrix_e2ee」。",
       "verify": "正在等待对方设备确认验证。"
     },
     "abort": {
       "no_client": "matrix_e2ee 客户端未运行。",
-      "no_devices": "没有可验证的已知设备。",
       "verification_failed": "设备验证失败。",
       "verification_canceled": "设备验证已取消。",
       "verification_timeout": "设备验证超时。",
