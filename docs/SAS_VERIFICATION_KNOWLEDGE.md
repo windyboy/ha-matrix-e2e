@@ -1,6 +1,6 @@
 # Matrix 设备认证（SAS）— 知识沉淀
 
-> 本文档是 `ha-matrix-e2e`（`custom_components/matrix_e2ee`，基于 matrix-nio 0.26.0 + vodozemac）在
+> 本文档是 `ha-matrix-e2ee`（`custom_components/matrix_e2ee`，基于 matrix-nio 0.26.0 + vodozemac）在
 > Matrix 设备验证方面**全部已知知识的汇总**，范围：官方规范、官方文档/实现偏差、认证流程、代码定位、
 > 注意事项。目的：避免重复排查、重复实现、重复踩坑。
 >

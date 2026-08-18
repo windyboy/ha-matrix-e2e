@@ -1,7 +1,0 @@
-version: 1
-profile: standard
-overrides:
-  review_gate: pr_ready
-  completion_gate: release_confirmed
-execution_context:
-  mode: disabled

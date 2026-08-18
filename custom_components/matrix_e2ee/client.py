@@ -382,6 +382,7 @@ def _apply_sas_mac_patch(
         if not self.verified_devices:
             self.state = sas_state.canceled
             self.cancel_code, self.cancel_reason = self._key_mismatch_error
+            return
         self.state = sas_state.mac_received
 
     sas_cls.get_mac = get_mac
