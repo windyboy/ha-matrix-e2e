@@ -757,6 +757,15 @@ class MatrixE2EEClient:
             "store_sync_tokens": True,
         }
 
+    def connection_health(self) -> dict[str, Any]:
+        """Return non-secret connection state for the diagnostic sensor."""
+        session = self.session
+        return {
+            "connected": self.nio is not None and not self._soft_logged_out,
+            "soft_logged_out": self._soft_logged_out,
+            "device_id": session.device_id if session is not None else None,
+        }
+
     def safe_fingerprint(self) -> dict[str, Any] | None:
         """Return the bot's own public device keys for one-sided verification."""
         nio = self.nio
