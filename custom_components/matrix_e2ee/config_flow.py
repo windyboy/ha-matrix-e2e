@@ -375,14 +375,14 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
         return self.async_abort(reason="verification_timeout")
 
     async def _wait_for_inbound(self) -> None:
-        """Poll until an inbound SAS appears (or the wait times out)."""
+        """Poll until an inbound SAS shows emojis (or the wait times out)."""
         deadline = self.hass.loop.time() + VERIFICATION_TIMEOUT_SECONDS
         while self.hass.loop.time() < deadline:
             client = self._client()
             if client is None:
                 return
             snapshot = client.latest_sas_snapshot()
-            if snapshot is not None:
+            if snapshot is not None and snapshot.get("emojis"):
                 self._txn = snapshot["transaction_id"]
                 return
             await asyncio.sleep(0.25)
