@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from homeassistant.core import HomeAssistant
 
+from custom_components.matrix_e2ee import client as client_module
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
 from custom_components.matrix_e2ee.const import (
     CONF_ALLOWED_ROOMS,
@@ -50,6 +52,25 @@ class KeyVerificationMac:
         self.sender = sender
         self.transaction_id = transaction_id
         self.type = "m.key.verification.mac"
+
+
+def _fake_to_device_message(type_, recipient, recipient_device, content):
+    """Stand-in for nio's ToDeviceMessage (tests do not install nio)."""
+    return SimpleNamespace(
+        type=type_,
+        recipient=recipient,
+        recipient_device=recipient_device,
+        content=content,
+    )
+
+
+def _sent_dones(nio):
+    return [
+        s["message"]
+        for s in nio.to_device_sent
+        if s["op"] == "to_device"
+        and getattr(s["message"], "type", None) == "m.key.verification.done"
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -255,7 +276,10 @@ async def test_latest_sas_snapshot_skips_finished(
     await client.async_stop()
 
 
-async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> None:
+async def test_verify_device_full_match_flow(
+    hass: HomeAssistant, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
     entry, client, nio = await _setup_running(hass, tmp_path)
     original_options = dict(entry.options)
 
@@ -295,6 +319,12 @@ async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> N
     assert entry.options == original_options
     # The wizard never broadcasts a verification request.
     assert all(item.get("op") != "request" for item in nio.to_device_sent)
+    # The wire `done` concludes the request-based flow for Element.
+    dones = _sent_dones(nio)
+    assert len(dones) == 1
+    assert dones[0].recipient == PEER
+    assert dones[0].recipient_device == PEER_DEVICE
+    assert dones[0].content == {"transaction_id": TXN}
     await client.async_stop()
 
 

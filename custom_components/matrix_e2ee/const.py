@@ -44,6 +44,7 @@ DEVICE_NAME = "Home Assistant matrix_e2ee"
 VERIFICATION_TIMEOUT_SECONDS = 240
 
 SAS_METHOD_V1 = "m.sas.v1"
+VERIFICATION_DONE = "m.key.verification.done"
 VERIFICATION_REQUEST = "m.key.verification.request"
 VERIFICATION_READY = "m.key.verification.ready"
 

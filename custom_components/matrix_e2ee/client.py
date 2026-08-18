@@ -38,6 +38,7 @@ from .const import (
     EVENT_VERIFICATION,
     NIO_DEFAULT_PICKLE_KEY,
     SAS_METHOD_V1,
+    VERIFICATION_DONE,
     VERIFICATION_READY,
     VERIFICATION_REQUEST,
     VERIFICATION_REQUEST_MAX_AGE_MS,
@@ -1228,6 +1229,7 @@ class MatrixE2EEClient:
         user_id, device_id = self._sas_party(sas)
         if bool(getattr(sas, "verified", False)):
             self._sas_started_at.pop(transaction_id, None)
+            await self._send_verification_done(user_id, device_id, transaction_id)
             self._emit_verification(
                 "done",
                 transaction_id=transaction_id,
@@ -1427,6 +1429,51 @@ class MatrixE2EEClient:
             transaction_id,
         )
 
+    async def _send_verification_done(
+        self, user_id: str, device_id: str, transaction_id: str
+    ) -> None:
+        """Send m.key.verification.done to conclude a request-based SAS.
+
+        matrix-nio 0.26.0 has no ``done`` support (send or receive). In the
+        request-based flow (Element sends m.key.verification.request) the peer
+        enters ``WaitingForDone`` after the MAC exchange and will not complete
+        until it receives our ``done``. Sending it unconditionally is safe:
+        rust-sdk ignores ``done`` in the start-based flow (its ``Done`` state
+        has no ``done`` transition).
+        """
+        nio = self.nio
+        if nio is None:
+            return
+        to_device = getattr(nio, "to_device", None)
+        if to_device is None:
+            return
+        if (
+            not isinstance(user_id, str)
+            or not user_id
+            or not isinstance(device_id, str)
+            or not device_id
+        ):
+            return
+        try:
+            message = _to_device_message(
+                VERIFICATION_DONE,
+                user_id,
+                device_id,
+                {"transaction_id": transaction_id},
+            )
+            await _maybe_await(to_device(message))
+        except Exception:  # noqa: BLE001 — never crash the completion path
+            _LOGGER.warning(
+                "matrix_e2ee failed to send verification done txn=%s", transaction_id
+            )
+            return
+        _LOGGER.warning(
+            "matrix_e2ee sent done to %s device %s txn=%s",
+            user_id,
+            device_id,
+            transaction_id,
+        )
+
     async def handle_to_device_event(self, event: Any) -> None:
         """Drive inbound SAS. Accepting the protocol is not device trust."""
         if self._soft_logged_out:
@@ -1524,6 +1571,7 @@ class MatrixE2EEClient:
         if kind == "mac":
             if bool(getattr(sas, "verified", False)):
                 self._sas_started_at.pop(transaction_id, None)
+                await self._send_verification_done(user_id, device_id, transaction_id)
                 self._emit_verification(
                     "done",
                     transaction_id=transaction_id,
