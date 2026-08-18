@@ -1054,27 +1054,32 @@ class MatrixE2EEClient:
             "emojis": self._sas_emojis(sas),
         }
 
-    def active_inbound_verification(self) -> dict[str, Any] | None:
-        """Return the first non-terminal inbound SAS snapshot, if any.
-
-        Covers the case where the peer started verification from their client
-        before this options flow was opened.
-        """
+    def list_known_devices(self) -> list[dict[str, Any]]:
+        """Return known devices from the crypto store, excluding the bot's own device."""
         nio = self.nio
         if nio is None:
-            return None
-        verifications = getattr(nio, "key_verifications", None)
-        if not isinstance(verifications, dict):
-            return None
-        for transaction_id, sas in verifications.items():
-            if bool(getattr(sas, "we_started_it", False)):
+            return []
+        store = getattr(nio, "device_store", None)
+        if not isinstance(store, dict):
+            return []
+        own_user = getattr(nio, "user_id", None)
+        own_device = getattr(nio, "device_id", None)
+        devices: list[dict[str, Any]] = []
+        for user_id, user_devices in store.items():
+            if not isinstance(user_devices, dict):
                 continue
-            if bool(getattr(sas, "verified", False)) or bool(
-                getattr(sas, "canceled", False)
-            ):
-                continue
-            return self.sas_snapshot(transaction_id)
-        return None
+            for device_id, device in user_devices.items():
+                if user_id == own_user and device_id == own_device:
+                    continue
+                devices.append(
+                    {
+                        "user_id": user_id,
+                        "device_id": device_id,
+                        "verified": bool(getattr(device, "verified", False)),
+                    }
+                )
+        devices.sort(key=lambda d: (d["user_id"], d["device_id"]))
+        return devices
 
     async def async_start_verification(self, user_id: str, device_id: str) -> str:
         """Start SAS with a known device. Does not mark the device trusted."""

@@ -20,7 +20,6 @@ except ImportError:  # pragma: no cover — HA < 2025.2
     OptionsFlowWithReload = OptionsFlow  # type: ignore[assignment,misc]
 
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 
 from .client import MatrixE2EEClient, MatrixE2EEError
@@ -34,7 +33,6 @@ from .const import (
     ERROR_LOGIN_FAILED,
     ERROR_PASSWORD_REQUIRED,
     ERROR_VERIFICATION_TIMEOUT,
-    EVENT_VERIFICATION,
     VERIFICATION_TIMEOUT_SECONDS,
 )
 
@@ -66,17 +64,6 @@ def _base_error(code: str) -> str:
 def _csv_to_list(value: str) -> list[str]:
     """Split a comma-separated string into a trimmed, non-empty list."""
     return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _format_fingerprint(fingerprint: dict[str, Any] | None) -> str:
-    """Render the bot's public keys for one-sided verification."""
-    if not fingerprint:
-        return "unavailable"
-    return (
-        f"user: {fingerprint.get('user_id')}\n"
-        f"device: {fingerprint.get('device_id')}\n"
-        f"ed25519: {fingerprint.get('ed25519')}"
-    )
 
 
 def _format_emojis(emojis: list[list[str]] | None) -> str:
@@ -284,17 +271,36 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
     async def async_step_verify_device(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show the bot fingerprint and wait for the peer to start verification."""
+        """Pick a known device and start a bot-initiated SAS verification."""
         client = self._client()
         if client is None:
             return self.async_abort(reason="no_client")
-        return self.async_show_progress(
-            step_id="wait_sas",
-            progress_action="wait_peer",
-            description_placeholders={
-                "fingerprint": _format_fingerprint(client.safe_fingerprint()),
-            },
-            progress_task=self.hass.async_create_task(self._wait_for_peer()),
+        if user_input is not None:
+            user_id, device_id = user_input["device"].split("|", 1)
+            try:
+                transaction_id = await client.async_start_verification(
+                    user_id, device_id
+                )
+            except MatrixE2EEError:
+                return self.async_abort(reason="verification_failed")
+            self._txn = transaction_id
+            return self.async_show_progress(
+                step_id="wait_sas",
+                progress_action="wait_peer",
+                progress_task=self.hass.async_create_task(self._wait_for_sas()),
+            )
+        devices = client.list_known_devices()
+        if not devices:
+            return self.async_abort(reason="no_devices")
+        device_options = {
+            f"{device['user_id']}|{device['device_id']}": (
+                f"{device['device_id']} ({device['user_id']})"
+            )
+            for device in devices
+        }
+        return self.async_show_form(
+            step_id="verify_device",
+            data_schema=vol.Schema({vol.Required("device"): vol.In(device_options)}),
         )
 
     async def async_step_wait_sas(
@@ -386,58 +392,20 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
             return self.async_abort(reason="verification_canceled")
         return self.async_abort(reason="verification_timeout")
 
-    async def _wait_for_peer(self) -> None:
-        """Capture the transaction id when the peer starts an inbound SAS."""
-        client = self._client()
-        if client is None:
-            return
-        existing = client.active_inbound_verification()
-        if existing is not None:
-            self._txn = existing["transaction_id"]
-            return
-        event = asyncio.Event()
-        remove = self.hass.bus.async_listen(
-            EVENT_VERIFICATION, self._verification_listener(event)
-        )
-        try:
-            await asyncio.wait_for(event.wait(), timeout=VERIFICATION_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            return
-        finally:
-            remove()
+    async def _wait_for_sas(self) -> None:
+        """Poll until the SAS emojis are available (or the verification ends)."""
+        deadline = self.hass.loop.time() + VERIFICATION_TIMEOUT_SECONDS
+        while self.hass.loop.time() < deadline:
+            snapshot = self._snapshot()
+            if snapshot is None or snapshot["canceled"] or snapshot["emojis"]:
+                return
+            await asyncio.sleep(0.25)
 
     async def _wait_for_done(self) -> None:
-        """Return once the current transaction reaches done/canceled/timeout."""
-        if self._txn is None:
-            return
-        snapshot = self._snapshot()
-        if snapshot is not None and (snapshot["verified"] or snapshot["canceled"]):
-            return
-        event = asyncio.Event()
-        remove = self.hass.bus.async_listen(
-            EVENT_VERIFICATION, self._verification_listener(event)
-        )
-        try:
-            await asyncio.wait_for(event.wait(), timeout=VERIFICATION_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            return
-        finally:
-            remove()
-
-    def _verification_listener(self, event: asyncio.Event) -> Any:
-        """Build a bus listener that captures the txn and flags terminal stages."""
-
-        @callback
-        def _listener(event_data: Any) -> None:
-            stage = event_data.data.get("stage")
-            if stage not in ("started", "sas", "canceled", "timeout", "done"):
+        """Poll until the verification reaches verified or canceled."""
+        deadline = self.hass.loop.time() + VERIFICATION_TIMEOUT_SECONDS
+        while self.hass.loop.time() < deadline:
+            snapshot = self._snapshot()
+            if snapshot is None or snapshot["verified"] or snapshot["canceled"]:
                 return
-            txn = event_data.data.get("transaction_id")
-            if self._txn is None and txn:
-                self._txn = txn
-            elif self._txn is not None and txn and txn != self._txn:
-                return
-            if stage in ("sas", "canceled", "timeout", "done"):
-                event.set()
-
-        return _listener
+            await asyncio.sleep(0.25)

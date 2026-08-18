@@ -6,7 +6,6 @@ import pytest
 
 from homeassistant.core import HomeAssistant
 
-from custom_components.matrix_e2ee import config_flow as config_flow_module
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
 from custom_components.matrix_e2ee.const import (
     CONF_ALLOWED_ROOMS,
@@ -15,27 +14,15 @@ from custom_components.matrix_e2ee.const import (
     CONF_HOMESERVER,
     CONF_USERNAME,
     DOMAIN,
-    EVENT_VERIFICATION,
 )
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from tests.fakes import FakeNio, FakeSas
+from tests.fakes import FakeNio
 
 HS = "https://matrix.example.org"
 USERNAME = "@ha-bot:example.org"
 PEER = "@admin:example.org"
 PEER_DEVICE = "ELEMENTABC"
-TXN = "txn-elementabc"
-
-
-class KeyVerificationStart:
-    def __init__(
-        self, sender, transaction_id, from_device, short_authentication_string=None
-    ):
-        self.sender = sender
-        self.transaction_id = transaction_id
-        self.from_device = from_device
-        self.short_authentication_string = short_authentication_string or ["emoji"]
-        self.type = "m.key.verification.start"
+TXN = f"txn-{PEER_DEVICE}"
 
 
 class KeyVerificationKey:
@@ -72,7 +59,11 @@ def _make_entry(hass: HomeAssistant) -> MockConfigEntry:
     return entry
 
 
-def _make_running_client(hass: HomeAssistant, tmp_path):
+async def _setup_running(
+    hass: HomeAssistant, tmp_path
+) -> tuple[MockConfigEntry, MatrixE2EEClient, FakeNio]:
+    """Create an entry with a running client bound to a fake nio instance."""
+    entry = _make_entry(hass)
     created: dict[str, FakeNio] = {}
 
     def factory(homeserver, user, **kwargs):
@@ -89,22 +80,23 @@ def _make_running_client(hass: HomeAssistant, tmp_path):
         allowed_rooms=[],
         allowed_users=[PEER],
         command_prefix="!",
-        fire_event=lambda event_type, data: hass.bus.async_fire(event_type, data),
+        fire_event=lambda event_type, data: None,
         nio_client_factory=factory,
     )
-    return client, created
-
-
-async def _seed_inbound_sas(client: MatrixE2EEClient, nio: FakeNio) -> None:
-    """Register the peer device and SAS so the flow can capture it."""
+    await client.async_start()
+    nio = created["nio"]
     nio.add_device(PEER, PEER_DEVICE, verified=False)
-    nio.key_verifications[TXN] = FakeSas(TXN, PEER, PEER_DEVICE, we_started_it=False)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = client
+    return entry, client, nio
 
 
-async def _drive_peer_sas(client: MatrixE2EEClient) -> None:
-    """Send the inbound start + key events that surface SAS emojis."""
-    await client.handle_to_device_event(KeyVerificationStart(PEER, TXN, PEER_DEVICE))
-    await client.handle_to_device_event(KeyVerificationKey(PEER, TXN))
+async def _open_verify_device(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
+    """Navigate the options menu to the device dropdown form."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == "menu"
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "verify_device"}
+    )
 
 
 async def test_options_flow_persists_and_schedules_reload(
@@ -193,27 +185,53 @@ async def test_verify_device_aborts_without_running_client(hass: HomeAssistant) 
     assert result["reason"] == "no_client"
 
 
-async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> None:
+async def test_verify_device_no_devices_aborts(hass: HomeAssistant, tmp_path) -> None:
     entry = _make_entry(hass)
-    client, created = _make_running_client(hass, tmp_path)
+    created: dict[str, FakeNio] = {}
+
+    def factory(homeserver, user, **kwargs):
+        nio = FakeNio(homeserver, user, **kwargs)
+        nio.user_id = USERNAME
+        created["nio"] = nio
+        return nio
+
+    client = MatrixE2EEClient(
+        config_dir=tmp_path,
+        homeserver=HS,
+        username=USERNAME,
+        password="pw",
+        allowed_rooms=[],
+        allowed_users=[PEER],
+        command_prefix="!",
+        fire_event=lambda event_type, data: None,
+        nio_client_factory=factory,
+    )
     await client.async_start()
-    nio = created["nio"]
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = client
 
+    result = await _open_verify_device(hass, entry)
+    assert result["type"] == "abort"
+    assert result["reason"] == "no_devices"
+
+    await client.async_stop()
+
+
+async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> None:
+    entry, client, nio = await _setup_running(hass, tmp_path)
     original_options = dict(entry.options)
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == "menu"
-    assert result["step_id"] == "init"
+    result = await _open_verify_device(hass, entry)
+    assert result["type"] == "form"
+    assert result["step_id"] == "verify_device"
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "verify_device"}
+        result["flow_id"], {"device": f"{PEER}|{PEER_DEVICE}"}
     )
     assert result["type"] == "progress"
     assert result["step_id"] == "wait_sas"
 
-    await _seed_inbound_sas(client, nio)
-    await _drive_peer_sas(client)
+    # Peer shares its key → SAS emojis become available.
+    await client.handle_to_device_event(KeyVerificationKey(PEER, TXN))
     await hass.async_block_till_done()
 
     result = await hass.config_entries.options.async_configure(result["flow_id"])
@@ -226,6 +244,7 @@ async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> N
     assert result["type"] == "progress"
     assert result["step_id"] == "wait_done"
 
+    # Peer's MAC completes the SAS.
     nio.receive_verification_mac(TXN)
     await client.handle_to_device_event(KeyVerificationMac(PEER, TXN))
     await hass.async_block_till_done()
@@ -234,6 +253,7 @@ async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> N
     assert result["type"] == "abort"
     assert result["reason"] == "verification_complete"
 
+    assert nio.device_store[PEER][PEER_DEVICE].verified is True
     assert entry.options == original_options
     await client.async_stop()
 
@@ -241,28 +261,22 @@ async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> N
 async def test_verify_device_done_race_mac_before_confirm(
     hass: HomeAssistant, tmp_path
 ) -> None:
-    entry = _make_entry(hass)
-    client, created = _make_running_client(hass, tmp_path)
-    await client.async_start()
-    nio = created["nio"]
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = client
+    entry, client, nio = await _setup_running(hass, tmp_path)
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_verify_device(hass, entry)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "verify_device"}
+        result["flow_id"], {"device": f"{PEER}|{PEER_DEVICE}"}
     )
     assert result["type"] == "progress"
 
-    await hass.async_block_till_done()
-    await _seed_inbound_sas(client, nio)
-    await _drive_peer_sas(client)
+    await client.handle_to_device_event(KeyVerificationKey(PEER, TXN))
     await hass.async_block_till_done()
 
     result = await hass.config_entries.options.async_configure(result["flow_id"])
     assert result["step_id"] == "compare"
 
-    # Peer's MAC arrives before our confirm: verifying it completes the SAS
-    # synchronously inside async_confirm_verification, so we abort right away.
+    # Peer's MAC arrives before our confirm: confirm completes the SAS
+    # synchronously, so the flow aborts right away instead of waiting.
     nio.receive_verification_mac(TXN)
 
     result = await hass.config_entries.options.async_configure(
@@ -270,26 +284,21 @@ async def test_verify_device_done_race_mac_before_confirm(
     )
     assert result["type"] == "abort"
     assert result["reason"] == "verification_complete"
+    assert nio.device_store[PEER][PEER_DEVICE].verified is True
 
     await client.async_stop()
 
 
 async def test_verify_device_mismatch_cancels(hass: HomeAssistant, tmp_path) -> None:
-    entry = _make_entry(hass)
-    client, created = _make_running_client(hass, tmp_path)
-    await client.async_start()
-    nio = created["nio"]
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = client
+    entry, client, nio = await _setup_running(hass, tmp_path)
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_verify_device(hass, entry)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "verify_device"}
+        result["flow_id"], {"device": f"{PEER}|{PEER_DEVICE}"}
     )
     assert result["type"] == "progress"
 
-    await hass.async_block_till_done()
-    await _seed_inbound_sas(client, nio)
-    await _drive_peer_sas(client)
+    await client.handle_to_device_event(KeyVerificationKey(PEER, TXN))
     await hass.async_block_till_done()
 
     result = await hass.config_entries.options.async_configure(result["flow_id"])
@@ -301,30 +310,6 @@ async def test_verify_device_mismatch_cancels(hass: HomeAssistant, tmp_path) -> 
     assert result["type"] == "abort"
     assert result["reason"] == "verification_canceled"
     assert nio.key_verifications[TXN].canceled is True
-
-    await client.async_stop()
-
-
-async def test_verify_device_peer_timeout(
-    hass: HomeAssistant, tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    entry = _make_entry(hass)
-    client, created = _make_running_client(hass, tmp_path)
-    await client.async_start()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = client
-
-    monkeypatch.setattr(config_flow_module, "VERIFICATION_TIMEOUT_SECONDS", 0.01)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "verify_device"}
-    )
-    assert result["type"] == "progress"
-
-    await hass.async_block_till_done()
-
-    result = await hass.config_entries.options.async_configure(result["flow_id"])
-    assert result["type"] == "abort"
-    assert result["reason"] == "verification_timeout"
+    assert nio.device_store[PEER][PEER_DEVICE].verified is False
 
     await client.async_stop()

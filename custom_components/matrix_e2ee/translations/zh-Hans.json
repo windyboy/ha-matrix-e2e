@@ -45,6 +45,13 @@
           "verify_device": "验证设备"
         }
       },
+      "verify_device": {
+        "title": "验证设备",
+        "description": "选择要验证的设备。将启动 SAS 验证并显示需要比对的 emoji。",
+        "data": {
+          "device": "设备"
+        }
+      },
       "access_controls": {
         "title": "访问控制",
         "description": "编辑访问控制与命令前缀。",
@@ -69,11 +76,12 @@
       }
     },
     "progress": {
-      "wait_peer": "正在等待你在 Matrix 客户端中验证此设备。\n\nHome Assistant 设备：\n{fingerprint}",
+      "wait_peer": "正在等待对方设备接受验证。",
       "verify": "正在等待对方设备确认验证。"
     },
     "abort": {
       "no_client": "matrix_e2ee 客户端未运行。",
+      "no_devices": "没有可验证的已知设备。",
       "verification_failed": "设备验证失败。",
       "verification_canceled": "设备验证已取消。",
       "verification_timeout": "设备验证超时。",

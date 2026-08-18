@@ -40,7 +40,9 @@ TXN = "txn-elementabc"
 
 
 class KeyVerificationStart:
-    def __init__(self, sender, transaction_id, from_device, short_authentication_string=None):
+    def __init__(
+        self, sender, transaction_id, from_device, short_authentication_string=None
+    ):
         self.sender = sender
         self.transaction_id = transaction_id
         self.from_device = from_device
@@ -77,7 +79,9 @@ def _now_ms():
 class VerificationRequest:
     """Model nio's UnknownToDeviceEvent for an m.key.verification.request."""
 
-    def __init__(self, sender, from_device, transaction_id, methods=None, timestamp=None):
+    def __init__(
+        self, sender, from_device, transaction_id, methods=None, timestamp=None
+    ):
         content = {
             "from_device": from_device,
             "transaction_id": transaction_id,
@@ -171,7 +175,10 @@ async def test_start_verification_missing_device(tmp_path):
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_start_verification(USER, PEER_DEVICE)
     assert err.value.code == ERROR_DEVICE_MISSING
-    assert any(item[0] == EVENT_ERROR and item[1]["code"] == ERROR_DEVICE_MISSING for item in events)
+    assert any(
+        item[0] == EVENT_ERROR and item[1]["code"] == ERROR_DEVICE_MISSING
+        for item in events
+    )
     await client.async_stop()
 
 
@@ -194,7 +201,11 @@ async def test_outbound_sas_confirm_then_encrypted_send_and_command(tmp_path):
     assert started[-1][1]["device_id"] == PEER_DEVICE
 
     await client.handle_to_device_event(KeyVerificationKey(USER, txn))
-    sas_events = [item[1] for item in events if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "sas"]
+    sas_events = [
+        item[1]
+        for item in events
+        if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "sas"
+    ]
     assert sas_events[-1]["emojis"] == [["⚓", "Anchor"], ["☎️", "Telephone"]]
     assert "body" not in sas_events[-1]
     assert "expires_at" in sas_events[-1]
@@ -202,7 +213,11 @@ async def test_outbound_sas_confirm_then_encrypted_send_and_command(tmp_path):
     await client.async_confirm_verification(txn)
     nio.receive_verification_mac(txn)
     await client.handle_to_device_event(KeyVerificationMac(USER, txn))
-    done = [item[1] for item in events if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done"]
+    done = [
+        item[1]
+        for item in events
+        if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done"
+    ]
     assert done
     assert nio.device_store[USER][PEER_DEVICE].verified is True
 
@@ -230,10 +245,11 @@ async def test_inbound_sas_accept_is_not_trust_until_confirm(tmp_path):
     nio.add_device(USER, PEER_DEVICE, verified=False)
     nio.key_verifications[TXN] = FakeSas(TXN, USER, PEER_DEVICE, we_started_it=False)
 
-    await client.handle_to_device_event(
-        KeyVerificationStart(USER, TXN, PEER_DEVICE)
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started"
+        for item in events
     )
-    assert any(item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started" for item in events)
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_send_message(ROOM, "hello")
     assert err.value.code == ERROR_UNVERIFIED_DEVICE
@@ -256,7 +272,11 @@ async def test_cancel_and_invalid_transaction(tmp_path):
     nio.add_device(USER, PEER_DEVICE)
     txn = await client.async_start_verification(USER, PEER_DEVICE)
     await client.async_cancel_verification(txn)
-    canceled = [item[1] for item in events if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "canceled"]
+    canceled = [
+        item[1]
+        for item in events
+        if item[0] == EVENT_VERIFICATION and item[1]["stage"] == "canceled"
+    ]
     assert canceled
     assert nio.device_store[USER][PEER_DEVICE].verified is False
 
@@ -282,7 +302,10 @@ async def test_verification_timeout(tmp_path):
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_confirm_verification(txn)
     assert err.value.code == ERROR_VERIFICATION_TIMEOUT
-    assert any(item[0] == EVENT_VERIFICATION and item[1]["stage"] == "timeout" for item in events)
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "timeout"
+        for item in events
+    )
     await client.async_stop()
 
 
@@ -300,7 +323,10 @@ async def test_mac_without_confirm_does_not_verify(tmp_path):
     nio.receive_verification_mac(TXN)
     await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
     assert sas.verified is False
-    assert all(not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done") for item in events)
+    assert all(
+        not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done")
+        for item in events
+    )
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_send_message(ROOM, "hello")
     assert err.value.code == ERROR_UNVERIFIED_DEVICE
@@ -419,7 +445,9 @@ async def test_verify_device_by_fingerprint_requires_match(tmp_path):
     assert exc.value.code == ERROR_FINGERPRINT_MISMATCH
     assert nio.device_store[USER][PEER_DEVICE].verified is False
 
-    await client.async_verify_device_by_fingerprint(USER, PEER_DEVICE, "ED25519_DEVICE_KEY")
+    await client.async_verify_device_by_fingerprint(
+        USER, PEER_DEVICE, "ED25519_DEVICE_KEY"
+    )
     assert nio.device_store[USER][PEER_DEVICE].verified is True
     await client.async_stop()
 
@@ -655,9 +683,12 @@ def test_sas_commitment_patch_fixes_hex_encoding():
             return SimpleNamespace(content="START")
 
         def _check_commitment(self, key):
-            return self.commitment == hashlib.sha256(
-                key.encode() + self.start_verification().content.encode()
-            ).hexdigest()
+            return (
+                self.commitment
+                == hashlib.sha256(
+                    key.encode() + self.start_verification().content.encode()
+                ).hexdigest()
+            )
 
     _apply_sas_commitment_patch(SasLike, to_canonical_json)
 
@@ -800,16 +831,14 @@ async def test_request_replies_ready_then_sas_flow(tmp_path, monkeypatch):
 
     await client.handle_to_device_event(KeyVerificationKey(USER, TXN))
     assert any(
-        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "sas"
-        for item in events
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "sas" for item in events
     )
 
     await client.async_confirm_verification(TXN)
     nio.receive_verification_mac(TXN)
     await client.handle_to_device_event(KeyVerificationMac(USER, TXN))
     assert any(
-        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done"
-        for item in events
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "done" for item in events
     )
     assert nio.device_store[USER][PEER_DEVICE].verified is True
     await client.async_stop()
@@ -850,7 +879,9 @@ async def test_request_missing_transaction_id_ignored(tmp_path, monkeypatch):
     monkeypatch.setattr(client_module, "_to_device_message", _fake_to_device_message)
     await client.async_start()
     nio = created["nio"]
-    await client._handle_verification_request(VerificationRequest(USER, PEER_DEVICE, ""))
+    await client._handle_verification_request(
+        VerificationRequest(USER, PEER_DEVICE, "")
+    )
     assert _sent_readies(nio) == []
     await client.async_stop()
 
@@ -875,7 +906,9 @@ async def test_request_expired_timestamp_ignored(tmp_path, monkeypatch):
     await client.async_start()
     nio = created["nio"]
     await client._handle_verification_request(
-        VerificationRequest(USER, PEER_DEVICE, TXN, timestamp=_now_ms() - 11 * 60 * 1000)
+        VerificationRequest(
+            USER, PEER_DEVICE, TXN, timestamp=_now_ms() - 11 * 60 * 1000
+        )
     )
     assert _sent_readies(nio) == []
     await client.async_stop()
@@ -903,3 +936,68 @@ def test_request_timestamp_valid_rejects_non_int():
     assert _request_timestamp_valid(1.5) is False
     assert _request_timestamp_valid("123") is False
     assert _request_timestamp_valid(None) is False
+
+
+@pytest.mark.asyncio
+async def test_list_known_devices_excludes_self(tmp_path):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+    # The bot's own device is registered alongside a peer device.
+    nio.add_device(BOT, "HABOTABC", verified=False)
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+
+    devices = client.list_known_devices()
+
+    assert [(d["user_id"], d["device_id"]) for d in devices] == [(USER, PEER_DEVICE)]
+    assert devices[0]["verified"] is False
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_list_known_devices_empty_without_store(tmp_path):
+    factory, _ = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+
+    assert client.list_known_devices() == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_sas_snapshot_never_reads_timed_out(tmp_path):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+
+    class ExplodingTimedOutSas:
+        """A SAS whose ``timed_out`` raises if the snapshot reads it (the patch mutates state)."""
+
+        def __init__(self):
+            self.other_olm_device = SimpleNamespace(
+                user_id=USER, id=PEER_DEVICE, ed25519="PEERFP"
+            )
+            self.verified = False
+            self.canceled = False
+
+        @property
+        def timed_out(self):
+            raise AssertionError("sas_snapshot must not read timed_out")
+
+        def get_emoji(self):
+            return [("⚓", "Anchor"), ("☎️", "Telephone")]
+
+    nio.key_verifications[TXN] = ExplodingTimedOutSas()
+
+    snapshot = client.sas_snapshot(TXN)
+
+    assert snapshot is not None
+    assert snapshot["transaction_id"] == TXN
+    assert snapshot["user_id"] == USER
+    assert snapshot["device_id"] == PEER_DEVICE
+    assert snapshot["verified"] is False
+    assert snapshot["canceled"] is False
+    assert snapshot["emojis"] == [["⚓", "Anchor"], ["☎️", "Telephone"]]
+    await client.async_stop()

@@ -45,6 +45,13 @@
           "verify_device": "Verify device"
         }
       },
+      "verify_device": {
+        "title": "Verify device",
+        "description": "Choose a device to verify. A SAS verification will start and show emojis to compare.",
+        "data": {
+          "device": "Device"
+        }
+      },
       "access_controls": {
         "title": "Access controls",
         "description": "Edit access controls and the command prefix.",
@@ -69,11 +76,12 @@
       }
     },
     "progress": {
-      "wait_peer": "Waiting for you to verify this device from your Matrix client.\n\nHome Assistant device:\n{fingerprint}",
+      "wait_peer": "Waiting for the device to accept the verification.",
       "verify": "Waiting for the other device to confirm the verification."
     },
     "abort": {
       "no_client": "The matrix_e2ee client is not running.",
+      "no_devices": "No known devices to verify.",
       "verification_failed": "Device verification failed.",
       "verification_canceled": "Device verification was canceled.",
       "verification_timeout": "Device verification timed out.",
