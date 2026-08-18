@@ -29,10 +29,10 @@ mkdir -p /config/custom_components
 cp -a custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
 
-**From git** (replace `v0.2.0` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
+**From git** (replace `v0.3.4` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
 
 ```bash
-git clone --depth 1 --branch v0.2.0 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
+git clone --depth 1 --branch v0.3.4 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
 mkdir -p /config/custom_components
 cp -a /tmp/ha-matrix-e2ee/custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
@@ -99,7 +99,7 @@ Rules that this project will not violate:
 - Crypto store loss is a **new device**. Old history is not recoverable
 - Do not run built-in `matrix` and `matrix_e2ee` on the same bot account
 
-Do not claim production E2EE support until a real Element/homeserver SAS has been confirmed on a deployment.
+Device verification has been manually confirmed on a real deployment (Element SAS with the `m.key.verification.done` handshake). An automated end-to-end SAS test against a real homeserver is still backlog (W1N-171).
 
 ## Configuration (UI)
 
@@ -133,16 +133,16 @@ Commands fire Home Assistant events only. This integration never calls `domain.s
 
 ## Device verification
 
-Two paths are supported; see [SECURITY.md](SECURITY.md) for the trust model and [docs/DEVICE_VERIFICATION.md](docs/DEVICE_VERIFICATION.md) for a step-by-step walkthrough.
+Device verification has an in-UI wizard (v0.3+): **Settings → Devices & Services → Matrix E2EE → Configure → Verify device**. Two paths are supported; see [SECURITY.md](SECURITY.md) for the trust model and [docs/DEVICE_VERIFICATION.md](docs/DEVICE_VERIFICATION.md) for a step-by-step walkthrough.
 
 ### 1. SAS (mutual, manual confirmation)
 
 1. Log in to the bot account in Element (this becomes the bootstrap/admin device) and bootstrap its cross-signing identity.
 2. Start the server bot — it creates its device and uploads device keys.
 3. In Element, open the bot account's Sessions and verify the server bot device.
-4. Compare the SAS emojis on both sides, then call `matrix_e2ee.confirm_verification` from Home Assistant. Only this step marks the device verified.
+4. Compare the SAS emojis on both sides, then confirm from Home Assistant — either via the Options Flow → Verify device wizard (v0.3, recommended) or the `matrix_e2ee.confirm_verification` service. Only this explicit step marks the device verified.
 
-Every device — including another device of the bot's own account — requires this manual emoji comparison and explicit `confirm_verification`. There is no auto-confirm. Only the bot's own account or users in `allowed_users` may initiate SAS (`verification_peer_denied` otherwise).
+Every device — including another device of the bot's own account — requires this manual emoji comparison and explicit confirmation (wizard or `confirm_verification`). There is no auto-confirm. Only the bot's own account or users in `allowed_users` may initiate SAS (`verification_peer_denied` otherwise).
 
 ### 2. One-sided fingerprint (fallback)
 
@@ -154,7 +154,7 @@ Every device — including another device of the bot's own account — requires 
 
 Session JSON and the crypto store stay on the Home Assistant host. They are gitignored. This is a public repository: never commit tokens, pickle keys, passwords, or store files.
 
-Safe diagnostics (no token, pickle key, password, or message body) are the fields below. There is no Config Entry diagnostics platform in v0.2.
+Safe diagnostics (no token, pickle key, password, or message body) are the fields below. There is no Config Entry diagnostics platform in v0.3.
 
 - `user_id`
 - `device_id`
@@ -209,10 +209,11 @@ This integration does not rotate refresh tokens. If login or `reauthenticate` wo
 | **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Released ([#5](https://github.com/windyboy/ha-matrix-e2ee/pull/5)) |
 | **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Released ([#6](https://github.com/windyboy/ha-matrix-e2ee/pull/6)) |
 | **M5** | Config Flow migration: UI setup, options / reconfigure / reauth flows, YAML import, tests | Released (v0.2.0) |
+| **v0.3** | Options Flow device-verification wizard (bot- and peer-initiated) with live SAS emoji UI, `m.key.verification.done` handshake | Released (v0.3.4) |
 
 M1 acceptance uses unencrypted test rooms. The first successful login still creates a full E2EE-capable Matrix device so M2 does not “upgrade” a non-crypto device.
 
-M3 adds SAS so an already-known device can become `verified=True`. Tests mock nio; they do not use a live Element session. Do not claim production E2EE support until a real Element/homeserver SAS has been confirmed on a deployment.
+M3 adds SAS so an already-known device can become `verified=True`. Tests mock nio; they do not use a live Element session. SAS has been manually confirmed on a real deployment; automated end-to-end SAS testing is still backlog (W1N-171).
 
 ## License
 

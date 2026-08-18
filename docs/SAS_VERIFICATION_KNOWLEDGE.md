@@ -118,7 +118,7 @@ commitment 后才发自己的公钥。攻击者只有一次猜的机会：验证
 | 6 | 应优先/只用 `.v2` MAC | nio 0.26 **只协商 v1，不提供 `.v2`** | 保持 v1 + invalid_base64 与 rust-sdk/Element 互操作；**不要**自己加 `.v2`（会扩大协商面但 nio 没实现） | W1N-177 |
 | 7 | `keys_query` 应覆盖会话各方 | 只取「共享加密房间用户」→ bot 与自身设备不共享房间 → **永不查询自己** → 入站 SAS 建不起来 | 登录/恢复后把自身 `user_id` 加进 `users_for_key_query` 并预热 | W1N-166, PR #18 |
 | 8 | 收到 start 前应有设备 key | 新设备首次 start 命中 device_store KeyError → 丢弃 + 不建 SAS | `_repair_dropped_start`：查 key 后把同一 start 重喂给 `nio.olm.handle_key_verification` | W1N-170, PR #23 |
-| 9 | 校验失败应发 `m.key_mismatch` cancel | `receive_mac_event`「无已验证设备」分支置 canceled 后**缺 return**，下一行覆盖为 `mac_received` | 上游 bug，**Backlog**（W1N-179） | W1N-179 |
+| 9 | 校验失败应发 `m.key_mismatch` cancel | `receive_mac_event`「无已验证设备」分支置 canceled 后**缺 return**，下一行覆盖为 `mac_received`（上游 nio bug） | 集成 monkeypatch 已补 `return`（W1N-179, PR #31）；**上游 nio 0.26.0 仍未修**，升级需同步 | W1N-179 |
 | 10 | request 流 MAC 后双方互发 `done` 收尾 | **没有实现**；done 既不发送也不解析（`to_device.py` 只分发 start/accept/key/mac/cancel）→ Element 卡在 `WaitingForDone` 直到超时 | 集成 `_send_verification_done`：`sas.verified` 变 True 时补发 `done`（content 仅 `transaction_id`；无条件发，start 流被 Element 安全忽略） | W1N-183 |
 
 另：nio 的 `Sas.verified = (state == mac_received) ∧ sas_accepted`，`get_mac()` 在 `sas_accepted=False` 时抛
@@ -199,49 +199,49 @@ start；后续 accept/key/emoji 同方向 A；比对后同样 `confirm_verificat
 
 ## 4. 代码地图（`custom_components/matrix_e2ee/`）
 
-### client.py（1525 行；无 models.py，模型在此文件）
+### client.py（1690 行；无 models.py，模型在此文件）
 
-**nio 补丁区（160–398）**：
-
-| 函数 | 行 | 作用 |
-|---|---|---|
-| `_apply_sas_timeout_patch` | 164 | monkeypatch `Sas.timed_out`：verified/canceled→False；`now-creation ≥ _max_age(5min)`→canceled+`_timeout_error`+True。**忽略 nio 60s 事件超时 bug** |
-| `_sas_commitment(pubkey, canonical)` | 197 | SHA-256(pubkey+canonical) 的 unpadded base64 |
-| `_apply_sas_commitment_patch` | 208 | patch `from_key_verification_start`（accept commitment）+ `_check_commitment`（initiator 校验）→ unpadded base64 |
-| `_apply_sas_emoji_patch` | 256 | `_generate_emoji` 直接用 `established_sas.bytes(info).emoji_indices` 映射，不做 bit-slicing |
-| `_apply_sas_mac_patch` | 286 | 见下 |
-| `_select_mac_func` | 304 | `chosen_mac_method=="hkdf-hmac-sha256"` → `calculate_mac_invalid_base64`，否则 `calculate_mac` |
-| `get_mac`（patch） | 309 | `sas_accepted=False`/canceled 抛 `LocalProtocolError`；按规范拼 info、`ed25519:{own_device}` + `KEY_IDS` |
-| `receive_mac_event`（patch） | 339 | verified→return；`state!=key_received`→canceled；KEY_IDS 校验→`_key_mismatch_error`；逐 key device_id 匹配 + MAC 校验 → verified_devices；空→canceled（**缺 return，复刻 W1N-179 bug**） |
-| `_patch_nio_sas_timeout/_commitment/_emoji/_mac` | 188/246/277/390 | `try: from nio … except Exception: return`（测试无 nio 时 no-op） |
-
-**验证服务（936–1525）**：
+**nio 补丁区（167–398）**：
 
 | 函数 | 行 | 作用 |
 |---|---|---|
-| `enable_verification_callbacks` | 936 | 注册 `handle_to_device_event`（KeyVerificationEvent）+ `_handle_verification_request`（ToDeviceEvent） |
-| `_emit_verification(stage, **extra)` | 947 | fire `matrix_e2ee_verification` + warning log |
-| `_verification_expires_at` | 953 | now UTC + `_verification_timeout` ISO 串 |
-| `_lookup_device` / `_get_sas` | 959 / 972 | device_store 查设备 / `nio.key_verifications.get(txn)` |
-| `_sas_party` / `_sas_emojis` | 978 / 990 | 提取对端 (user,device) / `sas.get_emoji()`（异常吞掉→None，`list[list[str]]`） |
-| `_mark_sas_started` / `_sas_is_timed_out` | 1006 / 1009 | monotonic 记录 / 超时判断 |
-| `async_start_verification` | 1018 | 拒软登出；查设备→`nio.start_key_verification`；emit `started` |
-| `async_verify_device_by_fingerprint` | 1060 | `actual.strip()!=ed25519.strip()` 精确等值（W1N-159）→`fingerprint_mismatch`；`nio.olm.verify_device` |
-| `async_confirm_verification` | 1090 | 超时检查→`nio.confirm_short_auth_string(txn)`；verified→emit `done`，否则 emit `sas`。**唯一验设备路径** |
-| `async_cancel_verification` | 1139 | `nio.cancel_key_verification(txn, reject=False)` → emit `canceled` |
-| `_timeout_verification` | 1169 | cancel + emit `verification_timeout` + `timeout` |
-| `_bootstrap_allowed(sender)` | 1187 | `sender==session.user_id` 或 `sender in allowed_users`（W1N-143 门控） |
-| `_repair_dropped_start` | 1196 | `_query_device_keys(sender)` 后重喂 `nio.olm.handle_key_verification(event)`（W1N-170） |
-| `_handle_verification_request` | 1222 | 解析 request；校验 sender/txn/methods/timestamp → `_send_verification_ready`；**不建 SAS 状态**（W1N-173） |
-| `_send_verification_ready` | 1283 | 回 `ready` {from_device: own, methods:[m.sas.v1], transaction_id} |
-| `_send_verification_done` | 1301 | 回 `done` {transaction_id}（无条件发；request 流下 Element 从 `WaitingForDone` 转 `Done`，start 流安全忽略）（W1N-183） |
-| `handle_to_device_event` | 1314 | 主分发：门控→cancel→timeout→start（emoji 检查/repair/accept/emit）→key（emit sas）→mac（verified→发 done→emit done） |
-| `_verification_kind` | 1458 | 类名/type 串 → start/key/mac/cancel |
-| `_request_timestamp_valid` | 1447 | 未来≤5min 且 age≤10min |
-| `_transaction_id_from_verifications` | 1480 | 匹配 other user+device；唯一则兜底 |
-| `_verification_error_code` | 1496 | timeout→`verification_timeout`；LocalProtocolError/does not exist→`invalid_transaction`；unverified→`unverified_device`；否则 `send_failed` |
+| `_apply_sas_timeout_patch` | 167 | monkeypatch `Sas.timed_out`：verified/canceled→False；`now-creation ≥ _max_age(5min)`→canceled+`_timeout_error`+True。**忽略 nio 60s 事件超时 bug** |
+| `_sas_commitment(pubkey, canonical)` | 200 | SHA-256(pubkey+canonical) 的 unpadded base64 |
+| `_apply_sas_commitment_patch` | 211 | patch `from_key_verification_start`（accept commitment）+ `_check_commitment`（initiator 校验）→ unpadded base64 |
+| `_apply_sas_emoji_patch` | 259 | `_generate_emoji` 直接用 `established_sas.bytes(info).emoji_indices` 映射，不做 bit-slicing |
+| `_apply_sas_mac_patch` | 289 | 见下 |
+| `_select_mac_func` | 307 | `chosen_mac_method=="hkdf-hmac-sha256"` → `calculate_mac_invalid_base64`，否则 `calculate_mac` |
+| `get_mac`（patch） | 312 | `sas_accepted=False`/canceled 抛 `LocalProtocolError`；按规范拼 info、`ed25519:{own_device}` + `KEY_IDS` |
+| `receive_mac_event`（patch） | 342 | verified→return；`state!=key_received`→canceled；KEY_IDS 校验→`_key_mismatch_error`；逐 key device_id 匹配 + MAC 校验 → verified_devices；空→canceled（**已加 return，W1N-179 已修复**） |
+| `_patch_nio_sas_timeout/_commitment/_emoji/_mac` | 191/249/280/394 | `try: from nio … except Exception: return`（测试无 nio 时 no-op） |
 
-### const.py（79 行）
+**验证服务（952–1690）**：
+
+| 函数 | 行 | 作用 |
+|---|---|---|
+| `enable_verification_callbacks` | 952 | 注册 `handle_to_device_event`（KeyVerificationEvent）+ `_handle_verification_request`（ToDeviceEvent） |
+| `_emit_verification(stage, **extra)` | 963 | fire `matrix_e2ee_verification` + warning log |
+| `_verification_expires_at` | 971 | now UTC + `_verification_timeout` ISO 串 |
+| `_lookup_device` / `_get_sas` | 977 / 990 | device_store 查设备 / `nio.key_verifications.get(txn)` |
+| `_sas_party` / `_sas_emojis` | 996 / 1010 | 提取对端 (user,device) / `sas.get_emoji()`（异常吞掉→None，`list[list[str]]`） |
+| `_mark_sas_started` / `_sas_is_timed_out` | 1026 / 1029 | monotonic 记录 / 超时判断 |
+| `async_start_verification` | 1113 | 拒软登出；查设备→`nio.start_key_verification`；emit `started` |
+| `async_verify_device_by_fingerprint` | 1163 | `actual.strip()!=ed25519.strip()` 精确等值（W1N-159）→`fingerprint_mismatch`；`nio.olm.verify_device` |
+| `async_confirm_verification` | 1195 | 超时检查→`nio.confirm_short_auth_string(txn)`；verified→emit `done`，否则 emit `sas`。**唯一验设备路径** |
+| `async_cancel_verification` | 1249 | `nio.cancel_key_verification(txn, reject=False)` → emit `canceled` |
+| `_timeout_verification` | 1281 | cancel + emit `verification_timeout` + `timeout` |
+| `_bootstrap_allowed(sender)` | 1303 | `sender==session.user_id` 或 `sender in allowed_users`（W1N-143 门控） |
+| `_repair_dropped_start` | 1312 | `_query_device_keys(sender)` 后重喂 `nio.olm.handle_key_verification(event)`（W1N-170） |
+| `_handle_verification_request` | 1338 | 解析 request；校验 sender/txn/methods/timestamp → `_send_verification_ready`；**不建 SAS 状态**（W1N-173） |
+| `_send_verification_ready` | 1401 | 回 `ready` {from_device: own, methods:[m.sas.v1], transaction_id} |
+| `_send_verification_done` | 1432 | 回 `done` {transaction_id}（无条件发；request 流下 Element 从 `WaitingForDone` 转 `Done`，start 流安全忽略）（W1N-183） |
+| `handle_to_device_event` | 1477 | 主分发：门控→cancel→timeout→start（emoji 检查/repair/accept/emit）→key（emit sas）→mac（verified→发 done→emit done） |
+| `_verification_kind` | 1624 | 类名/type 串 → start/key/mac/cancel |
+| `_request_timestamp_valid` | 1613 | 未来≤5min 且 age≤10min |
+| `_transaction_id_from_verifications` | 1646 | 匹配 other user+device；唯一则兜底 |
+| `_verification_error_code` | 1662 | timeout→`verification_timeout`；LocalProtocolError/does not exist→`invalid_transaction`；unverified→`unverified_device`；否则 `send_failed` |
+
+### const.py（80 行）
 
 `SERVICE_START/CONFIRM/CANCEL_VERIFICATION`、`SERVICE_VERIFY_DEVICE_BY_FINGERPRINT`；`ATTR_ED25519/TRANSACTION_ID/
 USER_ID/DEVICE_ID`；`EVENT_VERIFICATION`/`EVENT_FINGERPRINT`；错误码见 §3.1；`VERIFICATION_TIMEOUT_SECONDS=240`；
@@ -281,7 +281,7 @@ ACCEPT/KEY/MAC/DONE/CANCEL` 类型串。
 **运维 / 测试**
 15. 设备 ID 变了 = store 丢失 → 按 runbook 重新验证，不静默新建设备（W1N-134/138）。
 16. 测试只用 FakeNio/FakeSas，**协议级问题单测不可见** → 缺真实 homeserver e2e（W1N-171 Backlog）。
-17. 上游 nio `receive_mac_event` 缺 return bug 已复刻到我们的 patch 里（W1N-179 Backlog），改上游时同步改。
+17. 上游 nio `receive_mac_event` 缺 return bug：我们的 monkeypatch 已补 `return`（W1N-179, PR #31）；上游 nio 0.26.0 仍未修，升级 nio 时需同步检查。
 
 ---
 
@@ -323,18 +323,21 @@ ACCEPT/KEY/MAC/DONE/CANCEL` 类型串。
 | W1N-175 | emoji 双转换（vodozemac indices） | §2-4 | ✅ |
 | W1N-177 | legacy MAC invalid-base64 | §2-5/6 / §5-1/2 | ✅ |
 | W1N-178 | 部署 v0.2.10（含 legacy MAC 修复） | — | ✅ |
-| W1N-179 | receive_mac_event 缺 return 覆盖 canceled（**未做**） | §2-9 / §5-17 | ⏳ |
+| W1N-179 | receive_mac_event 缺 return 覆盖 canceled | §2-9 / §5-17 | ✅ |
+| W1N-180 | Options Flow 设备验证向导（bot/peer-initiated，live SAS emoji UI） | §3 | ✅ |
+| W1N-182 | peer-initiated 向导等不到 emoji 被取消 | §3 | ✅ |
+| W1N-183 | request 流 MAC 后补发 `m.key.verification.done` | §2-10 / §3.2 | ✅ |
 
 ---
 
 ## 7. 当前版本状态与待办
 
-- 已发布至 **v0.2.10**（wire 修复线：commitment v0.2.8 → emoji v0.2.9 → legacy MAC v0.2.10，均已部署
-  hass.windy.lan）。
-- SAS 保持 **service/event-based**（v0.2.x）；HA 内 live SAS emoji UI 延后到 v0.3（W1N-165 / SECURITY.md）。
+- 已发布至 **v0.3.4**（wire 修复线：commitment v0.2.8 → emoji v0.2.9 → legacy MAC v0.2.10；v0.3 起加入 Options Flow
+  设备验证向导 + `m.key.verification.done` 收尾，均已部署 hass.windy.lan）。
+- SAS 现有两条路径：**Options Flow → Verify device 向导**（v0.3，推荐）+ service/event-based（`start_verification` /
+  `confirm_verification` / `cancel_verification`）。
 
-**Backlog（避免重复工作，动手前先查这 3 条）**：
+**Backlog（避免重复工作，动手前先查这 2 条）**：
 1. **W1N-156** — 拆分 `allowed_users` 为「命令权限」与「SAS 验证权限」两组；SAS 不支持算法显式 cancel；
    setup/stop/reauth async lock；事务绑定（存预期 user/device/创建时间）；CI manifest 依赖校验；ruff。
-2. **W1N-179** — nio `receive_mac_event` 缺 return（上游 + 我们的 monkeypatch 同步修，加单测）。
-3. **W1N-171** — 真实 homeserver 端到端 SAS 测试（docker Synapse 或人工 runbook）。
+2. **W1N-171** — 真实 homeserver 端到端 SAS 测试（docker Synapse 或人工 runbook）。
