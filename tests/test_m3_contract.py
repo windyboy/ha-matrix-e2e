@@ -146,6 +146,7 @@ def _client(tmp_path: Path, fire, factory):
         password="pw",
         allowed_rooms=[ROOM],
         allowed_users=[USER],
+        verification_peer_users=[USER],
         command_prefix="!",
         fire_event=fire,
         nio_client_factory=factory,
@@ -425,6 +426,81 @@ async def test_unknown_sender_verification_ignored(tmp_path):
         item[0] == EVENT_ERROR and item[1]["code"] == ERROR_VERIFICATION_PEER_DENIED
         for item in events
     )
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_command_user_without_sas_permission_cannot_drive_sas(tmp_path):
+    """A command-allowed user is not automatically allowed to drive SAS."""
+    factory, created = _factory_holder()
+    events = []
+    client = MatrixE2EEClient(
+        config_dir=tmp_path,
+        homeserver="https://matrix.example.org",
+        username=BOT,
+        password="pw",
+        allowed_rooms=[ROOM],
+        allowed_users=[USER],
+        verification_peer_users=[],
+        command_prefix="!",
+        fire_event=lambda t, d: events.append((t, d)),
+        nio_client_factory=factory,
+    )
+    await client.async_start()
+    nio = created["nio"]
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    nio.key_verifications[TXN] = FakeSas(TXN, USER, PEER_DEVICE)
+
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+
+    assert all(
+        not (item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started")
+        for item in events
+    )
+    assert any(
+        item[0] == EVENT_ERROR and item[1]["code"] == ERROR_VERIFICATION_PEER_DENIED
+        for item in events
+    )
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_sas_peer_without_command_permission_can_only_drive_sas(tmp_path):
+    """A SAS peer can drive verification but is not granted command permission."""
+    factory, created = _factory_holder()
+    events = []
+    client = MatrixE2EEClient(
+        config_dir=tmp_path,
+        homeserver="https://matrix.example.org",
+        username=BOT,
+        password="pw",
+        allowed_rooms=[ROOM],
+        allowed_users=[],
+        verification_peer_users=[USER],
+        command_prefix="!",
+        fire_event=lambda t, d: events.append((t, d)),
+        nio_client_factory=factory,
+    )
+    await client.async_start()
+    await client.async_sync_loop()
+    nio = created["nio"]
+    nio.rooms[ROOM] = SimpleNamespace(room_id=ROOM, encrypted=True)
+    nio.add_device(USER, PEER_DEVICE, verified=False)
+    nio.key_verifications[TXN] = FakeSas(TXN, USER, PEER_DEVICE, we_started_it=False)
+
+    # SAS is allowed for a verification peer.
+    await client.handle_to_device_event(KeyVerificationStart(USER, TXN, PEER_DEVICE))
+    assert any(
+        item[0] == EVENT_VERIFICATION and item[1]["stage"] == "started"
+        for item in events
+    )
+
+    # But commands from that user are not fired: no command permission.
+    client.handle_incoming_event(
+        SimpleNamespace(room_id=ROOM, encrypted=True),
+        SimpleNamespace(sender=USER, body="!ping", decrypted=True, verified=True),
+    )
+    assert all(item[0] != EVENT_COMMAND for item in events)
     await client.async_stop()
 
 

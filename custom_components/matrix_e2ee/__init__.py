@@ -22,6 +22,7 @@ from .const import (
     CONF_HOMESERVER,
     CONF_PASSWORD,
     CONF_USERNAME,
+    CONF_VERIFICATION_PEER_USERS,
     DEFAULT_COMMAND_PREFIX,
     DOMAIN,
     EVENT_ERROR,
@@ -89,6 +90,9 @@ else:
                     vol.Optional(CONF_ALLOWED_USERS, default=list): vol.All(
                         cv.ensure_list, [cv.string]
                     ),
+                    vol.Optional(CONF_VERIFICATION_PEER_USERS, default=list): vol.All(
+                        cv.ensure_list, [cv.string]
+                    ),
                     vol.Optional(
                         CONF_COMMAND_PREFIX, default=DEFAULT_COMMAND_PREFIX
                     ): cv.string,
@@ -128,6 +132,9 @@ else:
         return {
             CONF_ALLOWED_ROOMS: entry.options.get(CONF_ALLOWED_ROOMS, []),
             CONF_ALLOWED_USERS: entry.options.get(CONF_ALLOWED_USERS, []),
+            CONF_VERIFICATION_PEER_USERS: entry.options.get(
+                CONF_VERIFICATION_PEER_USERS, []
+            ),
             CONF_COMMAND_PREFIX: entry.options.get(
                 CONF_COMMAND_PREFIX, DEFAULT_COMMAND_PREFIX
             ),
@@ -275,6 +282,7 @@ else:
             password=None,
             allowed_rooms=options[CONF_ALLOWED_ROOMS],
             allowed_users=options[CONF_ALLOWED_USERS],
+            verification_peer_users=options[CONF_VERIFICATION_PEER_USERS],
             command_prefix=options[CONF_COMMAND_PREFIX],
             fire_event=lambda event_type, data: _fire_event(hass, event_type, data),
             nio_client_factory=_NIO_CLIENT_FACTORY,

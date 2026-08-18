@@ -55,11 +55,13 @@
         "data": {
           "allowed_rooms": "允许的房间",
           "allowed_users": "允许的用户",
+          "verification_peer_users": "验证对端用户",
           "command_prefix": "命令前缀"
         },
         "data_description": {
           "allowed_rooms": "以逗号分隔的房间 ID。留空表示禁止发送与接收命令。",
           "allowed_users": "以逗号分隔的用户 ID。留空表示禁止接收命令。",
+          "verification_peer_users": "以逗号分隔的用户 ID，允许其发起设备验证（SAS）。留空表示仅机器人自身账号可发起。",
           "command_prefix": "触发命令的单个字符前缀。"
         }
       },

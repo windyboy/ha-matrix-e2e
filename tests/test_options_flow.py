@@ -17,6 +17,7 @@ from custom_components.matrix_e2ee.const import (
     CONF_COMMAND_PREFIX,
     CONF_HOMESERVER,
     CONF_USERNAME,
+    CONF_VERIFICATION_PEER_USERS,
     DOMAIN,
 )
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -113,6 +114,7 @@ async def _setup_running(
         password="pw",
         allowed_rooms=[],
         allowed_users=[PEER],
+        verification_peer_users=[PEER],
         command_prefix="!",
         fire_event=lambda event_type, data: None,
         nio_client_factory=factory,
@@ -168,6 +170,7 @@ async def test_options_flow_persists_and_schedules_reload(
     assert entry.options == {
         CONF_ALLOWED_ROOMS: ["!room1:example.org", "!room2:example.org"],
         CONF_ALLOWED_USERS: ["@admin:example.org"],
+        CONF_VERIFICATION_PEER_USERS: [],
         CONF_COMMAND_PREFIX: "$",
     }
     assert scheduled == [entry.entry_id]

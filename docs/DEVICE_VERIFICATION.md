@@ -89,7 +89,7 @@
 
 | 现象 | 含义 | 处理 |
 |---|---|---|
-| `verification_peer_denied` | 发起验证的不是机器人自己或 `allowed_users` | 检查是谁在发起 |
+| `verification_peer_denied` | 发起验证的不是机器人自己或 `verification_peer_users` | 检查是谁在发起 |
 | `verification_timeout` | 4 分钟没确认 | 重新发起一次验证 |
 | `fingerprint_mismatch` | 指纹对不上 | 停止，重新核对指纹，怀疑中间人 |
 | `invalid_transaction` | `transaction_id` 不对 | 从最新 `matrix_e2ee_verification` 事件里复制 |

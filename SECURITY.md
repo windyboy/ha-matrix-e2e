@@ -21,7 +21,7 @@ Device verification moved into the integration's Options Flow in v0.3: Settings 
 5. Compare the SAS emojis on both sides, then confirm from Home Assistant — either via the Options Flow → Verify device wizard (v0.3, bot-initiated) or the `matrix_e2ee.confirm_verification` service. Only this explicit step marks the device verified.
 6. Element cross-signs `BOT_SERVER_01`, which then shows as verified.
 
-There is no auto-confirm. A second device of the bot's own account is not trusted just because it shares the account; it must go through the same manual emoji comparison and explicit `confirm_verification`. Only the bot's own account or users in `allowed_users` may initiate SAS. Everything else is rejected with error code `verification_peer_denied`.
+There is no auto-confirm. A second device of the bot's own account is not trusted just because it shares the account; it must go through the same manual emoji comparison and explicit `confirm_verification`. Only the bot's own account or users in `verification_peer_users` may initiate SAS. Everything else is rejected with error code `verification_peer_denied`.
 
 ### 2. One-sided fingerprint (fallback)
 

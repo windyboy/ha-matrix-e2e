@@ -48,6 +48,7 @@ async def _make_client(tmp_path, whoami_soft_logout: bool = False):
         password="pw",
         allowed_rooms=[],
         allowed_users=[],
+        verification_peer_users=[],
         command_prefix="!",
         fire_event=lambda event_type, data: None,
         nio_client_factory=factory,

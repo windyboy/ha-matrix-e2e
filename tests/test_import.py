@@ -16,6 +16,7 @@ from custom_components.matrix_e2ee.const import (
     CONF_HOMESERVER,
     CONF_PASSWORD,
     CONF_USERNAME,
+    CONF_VERIFICATION_PEER_USERS,
     DOMAIN,
 )
 from custom_components.matrix_e2ee.storage import load_session
@@ -51,6 +52,7 @@ async def _seed_session(tmp_path) -> None:
         password=PASSWORD,
         allowed_rooms=[],
         allowed_users=[],
+        verification_peer_users=[],
         command_prefix="!",
         fire_event=lambda event_type, data: None,
         nio_client_factory=FakeNio,
@@ -114,6 +116,7 @@ async def test_yaml_import_first_login_with_password(
     assert entry.options == {
         CONF_ALLOWED_ROOMS: ["!room:example.org"],
         CONF_ALLOWED_USERS: ["@admin:example.org"],
+        CONF_VERIFICATION_PEER_USERS: [],
         CONF_COMMAND_PREFIX: "!",
     }
 

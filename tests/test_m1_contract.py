@@ -61,6 +61,7 @@ def _client(tmp_path: Path, fire, factory, password="pw", rooms=None, users=None
         password=password,
         allowed_rooms=rooms if rooms is not None else [ROOM],
         allowed_users=users if users is not None else [USER],
+        verification_peer_users=[],
         command_prefix="!",
         fire_event=fire,
         nio_client_factory=factory,
@@ -243,14 +244,16 @@ async def test_command_event_allowlist_and_no_raw_body(tmp_path):
     assert SECRET_BODY not in str(payload)
     assert "!ping" not in str(payload)
 
+    client.handle_incoming_event(SimpleNamespace(room_id="!other:example.org"), event)
     client.handle_incoming_event(
-        SimpleNamespace(room_id="!other:example.org"), event
+        room,
+        SimpleNamespace(
+            sender="@other:example.org", body="!ping", decrypted=False, verified=False
+        ),
     )
     client.handle_incoming_event(
-        room, SimpleNamespace(sender="@other:example.org", body="!ping", decrypted=False, verified=False)
-    )
-    client.handle_incoming_event(
-        room, SimpleNamespace(sender=USER, body="hello", decrypted=False, verified=False)
+        room,
+        SimpleNamespace(sender=USER, body="hello", decrypted=False, verified=False),
     )
     assert len([item for item in events if item[0] == EVENT_COMMAND]) == 1
     await client.async_stop()

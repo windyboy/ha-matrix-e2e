@@ -59,6 +59,7 @@ def _client(tmp_path: Path, fire, factory, password="pw"):
         password=password,
         allowed_rooms=[ROOM],
         allowed_users=[USER],
+        verification_peer_users=[],
         command_prefix="!",
         fire_event=fire,
         nio_client_factory=factory,
@@ -80,8 +81,12 @@ async def _seed_session(tmp_path: Path):
 async def test_soft_logout_keeps_store_and_same_device(tmp_path):
     session, store = await _seed_session(tmp_path)
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "whoami_soft_logout", True))
-    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "whoami_soft_logout", True)
+    )
+    client = _client(
+        tmp_path, lambda t, d: events.append((t, d)), factory, password=None
+    )
     await client.async_start()
     nio = created["nio"]
     loaded = load_session(tmp_path)
@@ -109,8 +114,12 @@ async def test_soft_logout_keeps_store_and_same_device(tmp_path):
 async def test_reauthenticate_replaces_token_only(tmp_path, caplog):
     session, store = await _seed_session(tmp_path)
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "whoami_soft_logout", True))
-    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "whoami_soft_logout", True)
+    )
+    client = _client(
+        tmp_path, lambda t, d: events.append((t, d)), factory, password=None
+    )
     await client.async_start()
     nio = created["nio"]
     nio.whoami_soft_logout = False
@@ -122,7 +131,9 @@ async def test_reauthenticate_replaces_token_only(tmp_path, caplog):
     assert loaded.access_token != session.access_token
     assert loaded.access_token == nio.access_token
     assert nio.store_path == store
-    assert nio.login_calls == [{"password": REAUTH_PASSWORD, "device_name": DEVICE_NAME}]
+    assert nio.login_calls == [
+        {"password": REAUTH_PASSWORD, "device_name": DEVICE_NAME}
+    ]
     assert client.safe_diagnostics()["soft_logged_out"] is False
     text = "\n".join(record.getMessage() for record in caplog.records)
     assert REAUTH_PASSWORD not in text
@@ -140,8 +151,12 @@ async def test_reauthenticate_replaces_token_only(tmp_path, caplog):
 async def test_reauthenticate_device_mismatch_does_not_write_token(tmp_path):
     session, _store = await _seed_session(tmp_path)
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "whoami_soft_logout", True))
-    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "whoami_soft_logout", True)
+    )
+    client = _client(
+        tmp_path, lambda t, d: events.append((t, d)), factory, password=None
+    )
     await client.async_start()
     nio = created["nio"]
     nio.whoami_soft_logout = False
@@ -163,8 +178,12 @@ async def test_reauthenticate_device_mismatch_does_not_write_token(tmp_path):
 async def test_hard_logout_fails_closed_and_does_not_reuse_store(tmp_path):
     session, store = await _seed_session(tmp_path)
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "whoami_hard_logout", True))
-    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "whoami_hard_logout", True)
+    )
+    client = _client(
+        tmp_path, lambda t, d: events.append((t, d)), factory, password=None
+    )
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_start()
     assert err.value.code == ERROR_HARD_LOGOUT
@@ -180,7 +199,9 @@ async def test_hard_logout_fails_closed_and_does_not_reuse_store(tmp_path):
 @pytest.mark.asyncio
 async def test_refresh_token_first_login_does_not_write_session(tmp_path):
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "login_refresh_token", True))
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "login_refresh_token", True)
+    )
     client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_start()
@@ -192,7 +213,9 @@ async def test_refresh_token_first_login_does_not_write_session(tmp_path):
 @pytest.mark.asyncio
 async def test_short_lived_token_first_login_does_not_write_session(tmp_path):
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "login_expires_in_ms", 60_000))
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "login_expires_in_ms", 60_000)
+    )
     client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_start()
@@ -205,8 +228,12 @@ async def test_short_lived_token_first_login_does_not_write_session(tmp_path):
 async def test_reauthenticate_rejects_refresh_token_without_replacing(tmp_path):
     session, _store = await _seed_session(tmp_path)
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "whoami_soft_logout", True))
-    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "whoami_soft_logout", True)
+    )
+    client = _client(
+        tmp_path, lambda t, d: events.append((t, d)), factory, password=None
+    )
     await client.async_start()
     nio = created["nio"]
     nio.whoami_soft_logout = False
@@ -241,8 +268,12 @@ async def test_store_loss_still_demands_new_device(tmp_path):
 async def test_soft_logout_blocks_send_commands_and_sync(tmp_path):
     await _seed_session(tmp_path)
     events = []
-    factory, created = _factory_holder(lambda nio: setattr(nio, "whoami_soft_logout", True))
-    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    factory, created = _factory_holder(
+        lambda nio: setattr(nio, "whoami_soft_logout", True)
+    )
+    client = _client(
+        tmp_path, lambda t, d: events.append((t, d)), factory, password=None
+    )
     await client.async_start()
     nio = created["nio"]
     with pytest.raises(MatrixE2EEError) as err:
@@ -272,7 +303,9 @@ async def test_reauthenticate_rejected_when_not_soft_logged_out(tmp_path):
     await _seed_session(tmp_path)
     events = []
     factory, _ = _factory_holder()
-    client = _client(tmp_path, lambda t, d: events.append((t, d)), factory, password=None)
+    client = _client(
+        tmp_path, lambda t, d: events.append((t, d)), factory, password=None
+    )
     await client.async_start()
     with pytest.raises(MatrixE2EEError) as err:
         await client.async_reauthenticate(REAUTH_PASSWORD)

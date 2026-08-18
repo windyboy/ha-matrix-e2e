@@ -148,7 +148,7 @@ commitment 后才发自己的公钥。攻击者只有一次猜的机会：验证
 - `matrix_e2ee_fingerprint` — 启动后 emit bot 指纹。
 - `matrix_e2ee_command` / `matrix_e2ee_error` — 命令事件（仅 `verified=True` 且 allowlist 命中才触发）。
 
-**错误码**（`const.py`）：`verification_peer_denied`（发起者非 bot 自身账号或 `allowed_users`）、`verification_timeout`
+**错误码**（`const.py`）：`verification_peer_denied`（发起者非 bot 自身账号或 `verification_peer_users`）、`verification_timeout`
 （集成超时 4min）、`fingerprint_mismatch`、`invalid_transaction`、`device_missing`。
 
 ### 3.2 双向流程（wire 时序）
@@ -188,7 +188,7 @@ start；后续 accept/key/emoji 同方向 A；比对后同样 `confirm_verificat
 - `confirm_verification` 是**唯一**完成验证的路径：先查超时，再 `nio.confirm_short_auth_string(txn)`，`sas.verified`
   → emit `done`，否则 emit `sas`（等用户再次 confirm）。
 - 入站门控：所有分支（start/key/mac/cancel）统一 `_bootstrap_allowed(sender)`——`sender == session.user_id`
-  **或** `sender ∈ allowed_users`，否则 emit `verification_peer_denied`（W1N-143）。
+  **或** `sender ∈ verification_peer_users`，否则 emit `verification_peer_denied`（W1N-143）。
 
 ### 3.3 路径二：单向指纹验证（降级/备选）
 
@@ -230,7 +230,7 @@ start；后续 accept/key/emoji 同方向 A；比对后同样 `confirm_verificat
 | `async_confirm_verification` | 1195 | 超时检查→`nio.confirm_short_auth_string(txn)`；verified→emit `done`，否则 emit `sas`。**唯一验设备路径** |
 | `async_cancel_verification` | 1249 | `nio.cancel_key_verification(txn, reject=False)` → emit `canceled` |
 | `_timeout_verification` | 1281 | cancel + emit `verification_timeout` + `timeout` |
-| `_bootstrap_allowed(sender)` | 1303 | `sender==session.user_id` 或 `sender in allowed_users`（W1N-143 门控） |
+| `_bootstrap_allowed(sender)` | 1314 | `sender==session.user_id` 或 `sender in verification_peer_users`（W1N-143 门控） |
 | `_repair_dropped_start` | 1312 | `_query_device_keys(sender)` 后重喂 `nio.olm.handle_key_verification(event)`（W1N-170） |
 | `_handle_verification_request` | 1338 | 解析 request；校验 sender/txn/methods/timestamp → `_send_verification_ready`；**不建 SAS 状态**（W1N-173） |
 | `_send_verification_ready` | 1401 | 回 `ready` {from_device: own, methods:[m.sas.v1], transaction_id} |
@@ -250,7 +250,7 @@ ACCEPT/KEY/MAC/DONE/CANCEL` 类型串。
 
 ### __init__.py
 
-`_register_services`(136) 服务→client 方法映射；`_fire_event`(123)；`_options`(126) 读 `allowed_users/allowed_rooms`；
+`_register_services`(143) 服务→client 方法映射；`_fire_event`(127)；`_options`(130) 读 `allowed_users/allowed_rooms/verification_peer_users`；
 `async_setup_entry`(268)/`async_unload_entry`(321)。
 
 ---
@@ -307,7 +307,7 @@ ACCEPT/KEY/MAC/DONE/CANCEL` 类型串。
 | W1N-151 | C verify_device_by_fingerprint（ed25519 精确门控） | §3.3 | ✅ |
 | W1N-153 | A 删除同账号 SAS 自动确认 | §5-10 | ✅ |
 | W1N-154 | E 文档改为手动确认 + 新指纹服务名 | — | ✅ |
-| W1N-156 | 加固跟进：allowlist 拆分 + P2 质量（**未做**） | §8 | ⏳ |
+| W1N-156 | 加固跟进：allowlist 拆分（P1-2 已做，P2 有意延后） | §5 | ✅ |
 | W1N-157 | F 人话版验证指南（docs/DEVICE_VERIFICATION.md） | — | ✅ |
 | W1N-158 | M5 Config Flow（reauth/设备验证 UI 路径动机） | — | ✅ |
 | W1N-159 | casefold 指纹比较 bug → 精确匹配 | §5-11 | ✅ |
@@ -332,12 +332,21 @@ ACCEPT/KEY/MAC/DONE/CANCEL` 类型串。
 
 ## 7. 当前版本状态与待办
 
-- 已发布至 **v0.3.4**（wire 修复线：commitment v0.2.8 → emoji v0.2.9 → legacy MAC v0.2.10；v0.3 起加入 Options Flow
-  设备验证向导 + `m.key.verification.done` 收尾，均已部署 hass.windy.lan）。
+- 已发布至 **v0.3.8**（wire 修复线：commitment v0.2.8 → emoji v0.2.9 → legacy MAC v0.2.10；v0.3 起加入 Options Flow
+  设备验证向导 + `m.key.verification.done` 收尾；v0.3.4–v0.3.7 依次补齐文档、日志降噪、Config Entry diagnostics、
+  连接健康实体；v0.3.8 拆分 allowlist）。
 - SAS 现有两条路径：**Options Flow → Verify device 向导**（v0.3，推荐）+ service/event-based（`start_verification` /
   `confirm_verification` / `cancel_verification`）。
+- **allowlist 已拆分（v0.3.8）**：`allowed_users` 只管「命令权限」，`verification_peer_users` 只管「SAS 发起权限」，
+  两者不再互相蕴含（W1N-156 P1-2）。
 
-**Backlog（避免重复工作，动手前先查这 2 条）**：
-1. **W1N-156** — 拆分 `allowed_users` 为「命令权限」与「SAS 验证权限」两组；SAS 不支持算法显式 cancel；
-   setup/stop/reauth async lock；事务绑定（存预期 user/device/创建时间）；CI manifest 依赖校验；ruff。
-2. **W1N-171** — 真实 homeserver 端到端 SAS 测试（docker Synapse 或人工 runbook）。
+**有意延后（P2 质量，非安全阻塞）**：
+- 设备级 allowlist（`inbound_peer_devices`）：SAS 已通过 emoji + `confirm_verification` 校验具体设备，价值有限。
+- SAS 不支持算法显式 cancel：当前静默忽略是安全的。
+- setup/stop/reauth async lock：未见竞态，低价值。
+- 事务绑定（预期 user/device/创建时间）：已由 nio `key_verifications` + 集成超时覆盖。
+- CI manifest 依赖校验：HA 安装期已校验 manifest 依赖。
+- ruff / 静态检查：项目当前无配置。
+
+**Backlog（避免重复工作，动手前先查这 1 条）**：
+1. **W1N-171** — 真实 homeserver 端到端 SAS 测试（docker Synapse 或人工 runbook）。

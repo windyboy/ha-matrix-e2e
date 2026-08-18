@@ -106,9 +106,9 @@ Device verification has been manually confirmed on a real deployment (Element SA
 All configuration is done through the Config Flow:
 
 - **homeserver** and **username** are entered when the integration is added. The username is read-only afterwards; the homeserver can be changed via **Reconfigure**.
-- **allowed_rooms**, **allowed_users**, and **command_prefix** are edited via **Configure** (Options). Changing them reloads the integration and reuses the existing crypto store.
+- **allowed_rooms**, **allowed_users**, **verification_peer_users**, and **command_prefix** are edited via **Configure** (Options). Changing them reloads the integration and reuses the existing crypto store.
 
-Empty `allowed_rooms`: no send, no inbound commands. Empty `allowed_users`: no inbound commands; send to allowed rooms is still permitted.
+Empty `allowed_rooms`: no send, no inbound commands. Empty `allowed_users`: no inbound commands; send to allowed rooms is still permitted. Empty `verification_peer_users`: no inbound SAS (only the bot's own account may initiate it).
 
 The old YAML block is no longer required. If a `matrix_e2ee:` block remains in `configuration.yaml`, it is imported into a config entry on startup (see [Migrating from the old YAML setup](#3-migrating-from-the-old-yaml-setup)).
 
@@ -142,7 +142,7 @@ Device verification has an in-UI wizard (v0.3+): **Settings → Devices & Servic
 3. In Element, open the bot account's Sessions and verify the server bot device.
 4. Compare the SAS emojis on both sides, then confirm from Home Assistant — either via the Options Flow → Verify device wizard (v0.3, recommended) or the `matrix_e2ee.confirm_verification` service. Only this explicit step marks the device verified.
 
-Every device — including another device of the bot's own account — requires this manual emoji comparison and explicit confirmation (wizard or `confirm_verification`). There is no auto-confirm. Only the bot's own account or users in `allowed_users` may initiate SAS (`verification_peer_denied` otherwise).
+Every device — including another device of the bot's own account — requires this manual emoji comparison and explicit confirmation (wizard or `confirm_verification`). There is no auto-confirm. Only the bot's own account or users in `verification_peer_users` may initiate SAS (`verification_peer_denied` otherwise).
 
 ### 2. One-sided fingerprint (fallback)
 

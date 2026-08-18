@@ -15,6 +15,7 @@ from custom_components.matrix_e2ee.const import (
     CONF_HOMESERVER,
     CONF_PASSWORD,
     CONF_USERNAME,
+    CONF_VERIFICATION_PEER_USERS,
     DOMAIN,
 )
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -79,7 +80,9 @@ async def test_user_flow_bad_password_shows_error(hass: HomeAssistant) -> None:
 
 async def test_user_flow_duplicate_aborts(hass: HomeAssistant) -> None:
     MockConfigEntry(
-        domain=DOMAIN, unique_id=USERNAME, data={CONF_HOMESERVER: HS, CONF_USERNAME: USERNAME}
+        domain=DOMAIN,
+        unique_id=USERNAME,
+        data={CONF_HOMESERVER: HS, CONF_USERNAME: USERNAME},
     ).add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
@@ -112,5 +115,6 @@ async def test_import_creates_entry_with_options(hass: HomeAssistant) -> None:
     assert result["options"] == {
         CONF_ALLOWED_ROOMS: ["!room:example.org"],
         CONF_ALLOWED_USERS: ["@admin:example.org"],
+        CONF_VERIFICATION_PEER_USERS: [],
         CONF_COMMAND_PREFIX: "!",
     }
