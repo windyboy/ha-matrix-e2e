@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from homeassistant.core import HomeAssistant
@@ -293,6 +295,46 @@ async def test_verify_device_full_match_flow(hass: HomeAssistant, tmp_path) -> N
     assert entry.options == original_options
     # The wizard never broadcasts a verification request.
     assert all(item.get("op") != "request" for item in nio.to_device_sent)
+    await client.async_stop()
+
+
+async def test_verify_device_waits_for_emojis(
+    hass: HomeAssistant, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wizard must wait for emojis, not abort on an emojis-less SAS."""
+    # Bound the poll loop so a stuck wait resolves in seconds, not 240s.
+    monkeypatch.setattr(
+        "custom_components.matrix_e2ee.config_flow.VERIFICATION_TIMEOUT_SECONDS", 2.0
+    )
+    entry, client, nio = await _setup_running(hass, tmp_path)
+
+    result = await _open_verify_device(hass, entry)
+    assert result["type"] == "progress"
+    assert result["step_id"] == "wait_inbound"
+
+    # The SAS exists right after `start`, but the peer's key hasn't arrived:
+    # emojis are not computable yet, so the wizard must keep waiting.
+    sas = FakeSas(TXN, PEER, PEER_DEVICE, we_started_it=False)
+    sas.emojis = []
+    nio.key_verifications[TXN] = sas
+    await client.handle_to_device_event(KeyVerificationStart(PEER, TXN, PEER_DEVICE))
+
+    # Let the poll loop run several cycles while emojis are still empty.
+    # (Do NOT use async_block_till_done here: it would wait on the poll task.)
+    await asyncio.sleep(0.6)
+    flow = hass.config_entries.options._progress[result["flow_id"]]
+    assert flow._txn is None  # regression: must not capture the txn yet
+
+    # The peer's key arrives → emojis become available → wizard advances.
+    sas.emojis = [("⚓", "Anchor"), ("☎️", "Telephone")]
+    await client.handle_to_device_event(KeyVerificationKey(PEER, TXN))
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"])
+    assert result["type"] == "menu"
+    assert result["step_id"] == "compare"
+    assert "⚓" in result["description_placeholders"]["emojis"]
+
     await client.async_stop()
 
 
