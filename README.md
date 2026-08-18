@@ -150,6 +150,8 @@ Every device — including another device of the bot's own account — requires 
 2. In Element, open the bot user's sessions and use "Manually verify by text".
 3. Compare the session key with the fingerprint. This trusts the bot from Element's side only; to trust a device from the bot's side, call `matrix_e2ee.verify_device_by_fingerprint` with the device's `ed25519` key. It is trusted only on an exact match.
 
+SAS interoperability with Element relies on four runtime patches to `matrix-nio` 0.26.0; see [docs/NIO_COMPAT.md](docs/NIO_COMPAT.md).
+
 ## Recovery runbook
 
 Session JSON and the crypto store stay on the Home Assistant host. They are gitignored. This is a public repository: never commit tokens, pickle keys, passwords, or store files.
