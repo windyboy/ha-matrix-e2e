@@ -23,20 +23,6 @@
         "data": {
           "homeserver": "Homeserver 地址"
         }
-      },
-      "init": {
-        "title": "选项",
-        "description": "编辑访问控制与命令前缀。",
-        "data": {
-          "allowed_rooms": "允许的房间",
-          "allowed_users": "允许的用户",
-          "command_prefix": "命令前缀"
-        },
-        "data_description": {
-          "allowed_rooms": "以逗号分隔的房间 ID。留空表示禁止发送与接收命令。",
-          "allowed_users": "以逗号分隔的用户 ID。留空表示禁止接收命令。",
-          "command_prefix": "触发命令的单个字符前缀。"
-        }
       }
     },
     "error": {
@@ -49,6 +35,57 @@
       "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
       "unknown": "未知错误",
       "login_failed": "登录失败"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "access_controls": "访问控制",
+          "verify_device": "验证设备"
+        }
+      },
+      "verify_device": {
+        "title": "验证设备",
+        "description": "选择要验证的设备。将启动 SAS 验证并显示需要比对的 emoji。",
+        "data": {
+          "device": "设备"
+        }
+      },
+      "access_controls": {
+        "title": "访问控制",
+        "description": "编辑访问控制与命令前缀。",
+        "data": {
+          "allowed_rooms": "允许的房间",
+          "allowed_users": "允许的用户",
+          "command_prefix": "命令前缀"
+        },
+        "data_description": {
+          "allowed_rooms": "以逗号分隔的房间 ID。留空表示禁止发送与接收命令。",
+          "allowed_users": "以逗号分隔的用户 ID。留空表示禁止接收命令。",
+          "command_prefix": "触发命令的单个字符前缀。"
+        }
+      },
+      "compare": {
+        "title": "验证设备",
+        "description": "请将这些表情符号与你的 Matrix 客户端中显示的内容进行比对，它们必须完全一致。\n\n{emojis}\n\n用户：{user_id}\n设备：{device_id}",
+        "menu_options": {
+          "match": "它们匹配",
+          "mismatch": "它们不匹配"
+        }
+      }
+    },
+    "progress": {
+      "wait_peer": "正在等待对方设备接受验证。",
+      "verify": "正在等待对方设备确认验证。"
+    },
+    "abort": {
+      "no_client": "matrix_e2ee 客户端未运行。",
+      "no_devices": "没有可验证的已知设备。",
+      "verification_failed": "设备验证失败。",
+      "verification_canceled": "设备验证已取消。",
+      "verification_timeout": "设备验证超时。",
+      "verification_complete": "设备验证完成。"
     }
   }
 }

@@ -10,7 +10,7 @@
 
 ## Device verification (two paths)
 
-Device verification remains service/event-based in v0.2 (`start_verification` / `confirm_verification` / `cancel_verification`). A live SAS emoji UI in Home Assistant is deferred to v0.3; compare emojis via the `matrix_e2ee_verification` event today.
+Device verification moved into the integration's Options Flow in v0.3: Settings → Devices & Services → Matrix E2EE → Configure → Verify device (a live SAS emoji wizard). The `start_verification` / `confirm_verification` / `cancel_verification` services remain available for automation, and the `matrix_e2ee_verification` event still reports every stage.
 
 ### 1. SAS (mutual, manual confirmation)
 
@@ -18,7 +18,7 @@ Device verification remains service/event-based in v0.2 (`start_verification` / 
 2. Bootstrap the bot's cross-signing identity in Element.
 3. Start the server bot; it creates its device (`BOT_SERVER_01` is an example identifier — the actual device display name is `Home Assistant matrix_e2ee`, `const.py` `DEVICE_NAME`, with a server-generated random device ID) and uploads device keys.
 4. In Element, open the bot account's Sessions and verify `BOT_SERVER_01`.
-5. Compare the SAS emojis on both sides, then call `matrix_e2ee.confirm_verification` from Home Assistant. Only this explicit step marks the device verified.
+5. Compare the SAS emojis on both sides, then confirm from Home Assistant — either via the Options Flow → Verify device wizard (v0.3, bot-initiated) or the `matrix_e2ee.confirm_verification` service. Only this explicit step marks the device verified.
 6. Element cross-signs `BOT_SERVER_01`, which then shows as verified.
 
 There is no auto-confirm. A second device of the bot's own account is not trusted just because it shares the account; it must go through the same manual emoji comparison and explicit `confirm_verification`. Only the bot's own account or users in `allowed_users` may initiate SAS. Everything else is rejected with error code `verification_peer_denied`.
