@@ -32,6 +32,12 @@ SAFE_FIELDS = {
 }
 
 
+@pytest.fixture
+def hass_config_dir(tmp_path) -> str:
+    """Isolate the config dir per test so login sessions do not leak."""
+    return str(tmp_path)
+
+
 @pytest.fixture(autouse=True)
 def _enable_custom_integrations(enable_custom_integrations) -> None:
     """Make HA's loader discover the custom_components package."""
