@@ -41,3 +41,4 @@ htmlcov/
 
 # Agent/tool session artifacts (regenerated locally)
 .omo/
+.opencode/

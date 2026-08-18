@@ -47,10 +47,7 @@
       },
       "verify_device": {
         "title": "Verify device",
-        "description": "Choose a device to verify. A SAS verification will start and show emojis to compare.",
-        "data": {
-          "device": "Device"
-        }
+        "description": "In your Matrix client (Element), open Settings → Sessions, select \"Home Assistant matrix_e2ee\", and click Verify. This window waits for the verification and shows the emojis to compare."
       },
       "access_controls": {
         "title": "Access controls",
@@ -76,12 +73,11 @@
       }
     },
     "progress": {
-      "wait_peer": "Waiting for the device to accept the verification.",
+      "wait_inbound": "Waiting for the other device to start verification. In Element: Settings → Sessions → verify \"Home Assistant matrix_e2ee\".",
       "verify": "Waiting for the other device to confirm the verification."
     },
     "abort": {
       "no_client": "The matrix_e2ee client is not running.",
-      "no_devices": "No known devices to verify.",
       "verification_failed": "Device verification failed.",
       "verification_canceled": "Device verification was canceled.",
       "verification_timeout": "Device verification timed out.",

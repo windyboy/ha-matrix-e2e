@@ -271,42 +271,24 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
     async def async_step_verify_device(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Pick a known device and start a bot-initiated SAS verification."""
+        """Wait for a verification initiated from the user's Matrix client.
+
+        The wizard does not initiate anything: the user verifies the bot's
+        session from Element, and this step waits for the inbound SAS to appear.
+        """
         client = self._client()
         if client is None:
             return self.async_abort(reason="no_client")
-        if user_input is not None:
-            user_id, device_id = user_input["device"].split("|", 1)
-            try:
-                transaction_id = await client.async_start_verification(
-                    user_id, device_id
-                )
-            except MatrixE2EEError:
-                return self.async_abort(reason="verification_failed")
-            self._txn = transaction_id
-            return self.async_show_progress(
-                step_id="wait_sas",
-                progress_action="wait_peer",
-                progress_task=self.hass.async_create_task(self._wait_for_sas()),
-            )
-        devices = client.list_known_devices()
-        if not devices:
-            return self.async_abort(reason="no_devices")
-        device_options = {
-            f"{device['user_id']}|{device['device_id']}": (
-                f"{device['device_id']} ({device['user_id']})"
-            )
-            for device in devices
-        }
-        return self.async_show_form(
-            step_id="verify_device",
-            data_schema=vol.Schema({vol.Required("device"): vol.In(device_options)}),
+        return self.async_show_progress(
+            step_id="wait_inbound",
+            progress_action="wait_inbound",
+            progress_task=self.hass.async_create_task(self._wait_for_inbound()),
         )
 
-    async def async_step_wait_sas(
+    async def async_step_wait_inbound(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Progress step: move to comparison once a SAS is captured."""
+        """Progress step: move to comparison once an inbound SAS is detected."""
         return self.async_show_progress_done(next_step_id="compare")
 
     async def async_step_compare(
@@ -392,12 +374,16 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
             return self.async_abort(reason="verification_canceled")
         return self.async_abort(reason="verification_timeout")
 
-    async def _wait_for_sas(self) -> None:
-        """Poll until the SAS emojis are available (or the verification ends)."""
+    async def _wait_for_inbound(self) -> None:
+        """Poll until an inbound SAS appears (or the wait times out)."""
         deadline = self.hass.loop.time() + VERIFICATION_TIMEOUT_SECONDS
         while self.hass.loop.time() < deadline:
-            snapshot = self._snapshot()
-            if snapshot is None or snapshot["canceled"] or snapshot["emojis"]:
+            client = self._client()
+            if client is None:
+                return
+            snapshot = client.latest_sas_snapshot()
+            if snapshot is not None:
+                self._txn = snapshot["transaction_id"]
                 return
             await asyncio.sleep(0.25)
 
