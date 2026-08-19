@@ -429,7 +429,7 @@ class MatrixE2EEClient:
                 continue
             try:
                 query.add(user_id)
-            except (AttributeError, TypeError):
+            except AttributeError, TypeError:
                 continue
         keys_query = getattr(nio, "keys_query", None)
         if keys_query is None:
@@ -768,11 +768,11 @@ class MatrixE2EEClient:
             return None
         try:
             user_devices = store[user_id]
-        except (KeyError, TypeError, AttributeError):
+        except KeyError, TypeError, AttributeError:
             return None
         try:
             return user_devices[device_id]
-        except (KeyError, TypeError, AttributeError):
+        except KeyError, TypeError, AttributeError:
             return None
 
     def _get_sas(self, nio: Any, transaction_id: str) -> Any | None:
