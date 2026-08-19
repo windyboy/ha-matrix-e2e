@@ -1,5 +1,7 @@
 # matrix-nio 0.26.0 compatibility patches
 
+> Language: [English](NIO_COMPAT.md) | [中文](NIO_COMPAT.zh.md)
+
 This integration pins `matrix-nio[e2e]==0.26.0` (see `manifest.json`) and applies
 four runtime patches to `nio.crypto.sas.Sas` before every client is created.
 The patches live in `custom_components/matrix_e2ee/nio_compat.py` and are applied

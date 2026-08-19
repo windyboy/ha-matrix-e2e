@@ -1,172 +1,174 @@
-# 设备安全验证：手把手操作指南
+# Device verification: step-by-step guide
 
-一句话：验证就是确认「Home Assistant 里的那个机器人设备，确实是你自己的设备」，防止有人拿到机器人账号密码后，用别的设备冒充它。
+> Language: [English](DEVICE_VERIFICATION.md) | [中文](DEVICE_VERIFICATION.zh.md)
 
-## 你需要准备什么
+In one sentence: verification confirms that **the bot device inside Home Assistant is actually yours**, so nobody who steals the bot password can impersonate it with another device.
 
-- 一个 Matrix 客户端 **Element**（手机或电脑都行）
-- 机器人账号（例如 `@ha-bot:example.org`）的密码
+## What you need
 
-## 整体思路
+- A Matrix client **Element** (phone or desktop)
+- The password for the bot account (for example `@ha-bot:example.org`)
 
-机器人账号有两把「钥匙」：
+## The idea
 
-- **cross-signing 身份**：只放在 Element 里，代表「这个账号归谁管」。
-- **设备密钥**：Home Assistant 里的机器人设备 `BOT_SERVER_01` 自己的一把钥匙。
+The bot account has two kinds of “keys”:
 
-> 说明：`BOT_SERVER_01` 只是本文的示例标识。实际部署里，机器人设备的**显示名**是 `Home Assistant matrix_e2ee`（`const.py` 的 `DEVICE_NAME`），设备 ID 由服务器随机生成，请在 Element 会话列表里按这个显示名找。
+- **Cross-signing identity**: lives only in Element; it represents “who owns this account”.
+- **Device keys**: the key pair belonging to the Home Assistant bot device `BOT_SERVER_01`.
 
-验证 = 让 Element 确认 `BOT_SERVER_01` 这把钥匙可信。确认方式是一串 emoji（像配对蓝牙设备那样）。
+> Note: `BOT_SERVER_01` is only an example identifier in this document. In a real deployment the bot device **display name** is `Home Assistant matrix_e2ee` (`DEVICE_NAME` in `const.py`). The device ID is assigned randomly by the server; look it up in Element’s session list by that display name.
 
-## 方式一：HA 界面向导（v0.3 起，推荐）
+Verification = Element confirming that the `BOT_SERVER_01` key is trusted. Confirmation is a string of emoji (like pairing a Bluetooth device).
 
-从 Home Assistant 界面完成验证的 emoji 比对与确认，无需在开发者工具里手动调服务。**验证仍由 Element 发起**（与官方客户端一致），向导负责等待并接管比对：
+## Path 1: HA UI wizard (v0.3+, recommended)
 
-1. 设置 → 设备与服务 → Matrix E2EE → 配置（Options）。
-2. 选择「验证设备」（Verify device）。
-3. 向导进入等待页，提示你在 Element 里发起验证：**Element → 设置 → 会话 → 找到 `Home Assistant matrix_e2ee` → 验证**。
-4. 在 Element 上接受验证请求，两端进入 emoji 比对。
-5. 回到 HA，向导已自动检测到验证并显示一串 emoji。
-   - 两端完全一致 → 选择「它们匹配」（They match）。
-   - 不一致 → 选择「它们不匹配」（They do not match），并检查账号是否被盗。
-6. 等待双方 MAC 完成，界面提示「设备验证完成」，Element 里该设备变为绿色「已验证」。
+Compare and confirm emoji from the Home Assistant UI. You do not need to call services by hand in Developer Tools. **Element still starts the verification** (same as official clients); the wizard waits and then takes over the comparison:
 
-> 说明：SAS 验证是双向的——一次成功的验证让 Element 信任机器人设备，也让机器人信任你的这台设备。向导不需要预先知道你的设备，也不需要主动发起；它只等待 Element 发起的验证并接管比对。
+1. Settings → Devices & Services → Matrix E2EE → Configure (Options).
+2. Choose “Verify device”.
+3. The wizard enters a waiting page and tells you to start verification in Element: **Element → Settings → Sessions → find `Home Assistant matrix_e2ee` → Verify**.
+4. Accept the verification request in Element; both sides enter emoji comparison.
+5. Back in HA, the wizard has already detected the verification and shows a string of emoji.
+   - Both sides match → choose “They match”.
+   - They do not match → choose “They do not match”, and check whether the account has been stolen.
+6. Wait for both MACs to complete. The UI says “Device verification complete”, and in Element the device becomes a green “Verified”.
 
-## 方式二：Element 发起验证
+> Note: SAS verification is mutual — one successful verification makes Element trust the bot device **and** makes the bot trust this Element device. The wizard does not need to know your device in advance, and it does not start the flow; it only waits for Element to start verification and then takes over comparison.
 
-## 第 0 步（一辈子只做一次）：建立账号身份
+## Path 2: Element starts verification
 
-1. 用机器人账号登录 Element。
-2. Element 首次登录会提示「设置安全密钥 / 恢复」——按提示完成，这是给账号建立 cross-signing 身份。
-3. 记下并保存恢复密钥（重要）。
+## Step 0 (once in the account’s lifetime): bootstrap the account identity
 
-## 第 1 步：启动 Home Assistant
+1. Log in to Element with the bot account.
+2. On first login Element prompts you to set a security key / recovery — follow it. That creates the account’s cross-signing identity.
+3. Write down and save the recovery key (important).
 
-1. 装好 `matrix_e2ee`，在 UI 里添加（设置 → 设备与服务 → 添加集成 → Matrix E2EE）。
-2. 添加成功即可。此时机器人设备 `BOT_SERVER_01` 已上线，并上传了自己的设备密钥。
+## Step 1: start Home Assistant
 
-## 第 2 步：在 Element 发起验证
+1. Install `matrix_e2ee` and add it in the UI (Settings → Devices & Services → Add Integration → Matrix E2EE).
+2. Once add succeeds, you are done. The bot device `BOT_SERVER_01` is online and has uploaded its device keys.
 
-1. Element → 设置 → 安全与隐私 → 会话 / 设备。
-2. 找到 `BOT_SERVER_01`（通常是未验证的灰色盾牌）。
-3. 点它 → 验证。
+## Step 2: start verification in Element
 
-整个流程由 **Element 发起**，HA 这端不需要调用 `matrix_e2ee.start_verification`。
+1. Element → Settings → Security & Privacy → Sessions / Devices.
+2. Find `BOT_SERVER_01` (usually an unverified grey shield).
+3. Tap it → Verify.
 
-## 第 3 步：比对 emoji
+The whole flow is **started by Element**. The HA side does not need `matrix_e2ee.start_verification`.
 
-1. Element 显示一串 emoji（比如 🐶 🌙 🔑）。
-2. 回到 Home Assistant → 开发者工具 → 事件，监听 `matrix_e2ee_verification`。会依次看到 `stage: started`（验证已开始），然后是 `stage: sas`（进入比对），其中的 `emojis` 就是 HA 这一端显示的 emoji。
-3. **逐个比对两端 emoji 是否完全一致。**
+## Step 3: compare emoji
 
-## 第 4 步：确认
+1. Element shows a string of emoji (for example 🐶 🌙 🔑).
+2. In Home Assistant → Developer Tools → Events, listen for `matrix_e2ee_verification`. You will see `stage: started` (verification began), then `stage: sas` (comparison). The `emojis` field is what HA shows on this side.
+3. **Compare the emoji on both sides one by one. They must match exactly.**
 
-- 两端完全一致 → 开发者工具 → 服务，调用 `matrix_e2ee.confirm_verification`，填 `transaction_id`（就是 `matrix_e2ee_verification` 事件里的那个）。
-- 不一致 → 调用 `matrix_e2ee.cancel_verification`，并检查账号是否被盗。
+## Step 4: confirm
 
-## 第 5 步：看到 Verified
+- Both sides match → Developer Tools → Services, call `matrix_e2ee.confirm_verification` with `transaction_id` (the one from the `matrix_e2ee_verification` event).
+- They do not match → call `matrix_e2ee.cancel_verification`, and check whether the account has been stolen.
 
-确认后，Element 里 `BOT_SERVER_01` 变成绿色「已验证」。HA 端也会发一个 `stage: done` 事件。
+## Step 5: see Verified
 
-## 重启后还在吗？
+After confirm, `BOT_SERVER_01` in Element becomes a green “Verified”. HA also fires a `stage: done` event.
 
-在。重启 HA 会恢复**同一个**设备 `BOT_SERVER_01`，验证状态保留。如果重启后设备 ID 变了，说明 crypto store 丢失，需要按 runbook 重新验证。
+## Does this survive a restart?
 
-## 备选：用指纹手动信任（不推荐，除非没法用 SAS）
+Yes. Restarting HA restores the **same** device `BOT_SERVER_01`, and the verification state is kept. If the device ID changes after a restart, the crypto store was lost and you must re-verify using the runbook.
 
-这是「单向本地信任」，不是完整 SAS：
+## Fallback: trust by fingerprint (not recommended unless SAS is impossible)
 
-1. HA 开发者工具 → 服务 `matrix_e2ee.get_fingerprint`，或读 `matrix_e2ee_fingerprint` 事件，拿到机器人的 `ed25519` 指纹。
-2. Element 里对机器人会话用「手动验证」比对指纹。
-3. 想从机器人这一端信任某设备：调用 `matrix_e2ee.verify_device_by_fingerprint`，填 `user_id`、`device_id`、该设备的 `ed25519`。**指纹必须完全一致才生效**，不一致会报 `fingerprint_mismatch`。
+This is “one-sided local trust”, not full SAS:
 
-注意：这条路不经过 emoji 比对，安全依赖你亲自在可信渠道比对指纹。
+1. HA Developer Tools → service `matrix_e2ee.get_fingerprint`, or read the `matrix_e2ee_fingerprint` event, to get the bot’s `ed25519` fingerprint.
+2. In Element, use “Manually verify” on the bot session and compare fingerprints.
+3. To trust a device from the bot’s side: call `matrix_e2ee.verify_device_by_fingerprint` with `user_id`, `device_id`, and that device’s `ed25519`. **It only takes effect on an exact match**; a mismatch raises `fingerprint_mismatch`.
 
-## 出错怎么办
+Note: this path does not go through emoji comparison. Safety depends on you comparing fingerprints yourself over a trusted channel.
 
-如果事件出现 `stage: canceled`：这次验证已作废（transaction 失效），**不要**调用 `confirm_verification`，回到第 2 步从 Element 重新发起。
+## If something goes wrong
 
-| 现象 | 含义 | 处理 |
+If an event arrives with `stage: canceled`: this verification is dead (the transaction is invalid). **Do not** call `confirm_verification`. Go back to step 2 and start again from Element.
+
+| Symptom | Meaning | What to do |
 |---|---|---|
-| `verification_peer_denied` | 发起验证的不是机器人自己或 `verification_peer_users` | 检查是谁在发起 |
-| `verification_timeout` | 4 分钟没确认 | 重新发起一次验证 |
-| `fingerprint_mismatch` | 指纹对不上 | 停止，重新核对指纹，怀疑中间人 |
-| `invalid_transaction` | `transaction_id` 不对 | 从最新 `matrix_e2ee_verification` 事件里复制 |
+| `verification_peer_denied` | The initiator is not the bot itself or `verification_peer_users` | Check who started it |
+| `verification_timeout` | No confirm within 4 minutes | Start a new verification |
+| `fingerprint_mismatch` | Fingerprints do not match | Stop, re-check the fingerprint, suspect a MITM |
+| `invalid_transaction` | Wrong `transaction_id` | Copy it from the latest `matrix_e2ee_verification` event |
 
-## 一句话总结
+## One-sentence summary
 
-每个设备——**包括机器人自己账号的另一台设备**——都必须「看 emoji → 你确认」才能被信任。没有自动信任。
+Every device — **including another device of the bot’s own account** — is trusted only after “look at the emoji → you confirm”. There is no auto-trust.
 
 ---
 
-## 附录：SAS 验证流程（源码级参考）
+## Appendix: SAS verification flow (source-level reference)
 
-给维护者/审查者的技术参考。事件顺序以 Matrix 规范 `m.key.verification.*`（to-device）为准。
+Technical reference for maintainers / reviewers. Event order follows the Matrix spec `m.key.verification.*` (to-device).
 
-### 关键源码定位
+### Key source locations
 
-**matrix-nio 0.26.0**（`matrix-nio` 包）：
+**matrix-nio 0.26.0** (`matrix-nio` package):
 
-| 文件 | 符号 | 职责 |
+| File | Symbol | Role |
 |---|---|---|
-| `nio/crypto/olm_machine.py` | `Olm.handle_key_verification()` | SAS 状态机驱动：消费 `KeyVerificationStart/Accept/Key/Mac/Cancel`，负责建立 `Sas`、自动 share key、校验 MAC、`verify_device()` |
-| `nio/crypto/sas.py` | `Sas`（`SasState`） | 状态机 `created → started → accepted → key_received → mac_received → canceled`；`share_key()`/`get_mac()`/`accept_verification()`/`receive_key_event()`/`receive_mac_event()`/`accept_sas()`；`verified == (state == mac_received and sas_accepted)` |
-| `nio/client/async_client.py` | `start_key_verification()` / `accept_key_verification()` / `confirm_short_auth_string()` / `cancel_key_verification()` | 面向应用的 API，内部 `to_device()` 即时发送 |
-| `nio/client/async_client.py` | `sync_forever()` → `send_to_device_messages()` | 定时排空 `outgoing_to_device_messages` 队列 |
+| `nio/crypto/olm_machine.py` | `Olm.handle_key_verification()` | SAS state machine: consumes `KeyVerificationStart/Accept/Key/Mac/Cancel`, creates `Sas`, auto-shares key, verifies MAC, `verify_device()` |
+| `nio/crypto/sas.py` | `Sas` (`SasState`) | State machine `created → started → accepted → key_received → mac_received → canceled`; `share_key()` / `get_mac()` / `accept_verification()` / `receive_key_event()` / `receive_mac_event()` / `accept_sas()`; `verified == (state == mac_received and sas_accepted)` |
+| `nio/client/async_client.py` | `start_key_verification()` / `accept_key_verification()` / `confirm_short_auth_string()` / `cancel_key_verification()` | Application-facing API; internally `to_device()` sends immediately |
+| `nio/client/async_client.py` | `sync_forever()` → `send_to_device_messages()` | Periodically drains the `outgoing_to_device_messages` queue |
 
-**本集成**（`custom_components/matrix_e2ee/client.py`，SAS 补丁在 `nio_compat.py`）：
+**This integration** (`custom_components/matrix_e2ee/client.py`; SAS patches in `nio_compat.py`):
 
-| 符号 | 职责 |
+| Symbol | Role |
 |---|---|
-| `_query_device_keys()` | 把指定账号的设备 key 预取进 `device_store`（`_query_own_device_keys()` 是其特例，登录/恢复后查机器人自己账号） |
-| `_repair_dropped_start()` | 收到 `start` 但 nio 因设备未知已丢弃时：查 sender 的 key 后把同一个 `start` 重喂给 `nio.olm.handle_key_verification()` |
-| `apply_nio_compat_patches()` | `nio_compat.py` 入口，`client.py` 的 `_make_nio()` 调用；内含 `_patch_nio_sas_timeout()` 等四个 SAS monkeypatch（timeout/commitment/emoji/mac），`_patch_nio_sas_timeout()` 忽略 nio 失效的 60s 事件超时（`_last_event_time` 从不刷新），只保留 5min 总超时 |
-| `enable_verification_callbacks()` | 注册 `handle_to_device_event` 到 `add_to_device_callback` |
-| `handle_to_device_event()` | 集成回调，处理 `start` / `key` / `mac` / `cancel`（**不处理 `accept`**） |
-| `_handle_verification_request()` / `_send_verification_ready()` | 桥接 `m.key.verification.request → ready`（nio 0.26 缺框架）；校验 sender/txn/methods/timestamp 后回 `ready` |
-| `_send_verification_done()` | 补发 `m.key.verification.done`（nio 0.26 无 done 支持），Element 从 `WaitingForDone` 转 `Done` |
-| `async_start_verification()` / `async_confirm_verification()` / `async_cancel_verification()` | 面向 HA 服务的三个入口 |
+| `_query_device_keys()` | Prefetches the given account’s device keys into `device_store` (`_query_own_device_keys()` is the special case that queries the bot’s own account after login/restore) |
+| `_repair_dropped_start()` | If a `start` arrived but nio dropped it because the device was unknown: query the sender’s keys, then re-feed the same `start` to `nio.olm.handle_key_verification()` |
+| `apply_nio_compat_patches()` | Entry in `nio_compat.py`, called from `client.py` `_make_nio()`; includes `_patch_nio_sas_timeout()` and three other SAS monkeypatches (timeout / commitment / emoji / mac). `_patch_nio_sas_timeout()` ignores nio’s broken 60s event timeout (`_last_event_time` is never refreshed) and keeps only the 5 min overall timeout |
+| `enable_verification_callbacks()` | Registers `handle_to_device_event` on `add_to_device_callback` |
+| `handle_to_device_event()` | Integration callback for `start` / `key` / `mac` / `cancel` (**does not handle `accept`**) |
+| `_handle_verification_request()` / `_send_verification_ready()` | Bridges `m.key.verification.request → ready` (missing in nio 0.26); validates sender / txn / methods / timestamp, then replies `ready` |
+| `_send_verification_done()` | Sends the extra `m.key.verification.done` (nio 0.26 has no done support) so Element leaves `WaitingForDone` for `Done` |
+| `async_start_verification()` / `async_confirm_verification()` / `async_cancel_verification()` | The three HA service entry points |
 
-### 方向 A：Element 发起（peer-initiated，bot 是接受方，`we_started_it=False`）
+### Direction A: Element initiates (peer-initiated; bot is responder, `we_started_it=False`)
 
-> 完整流程以 `request → ready` 开头（由集成 `_handle_verification_request()` 桥接），下表从 SAS 阶段的 `start` 开始。
+> The full flow starts with `request → ready` (bridged by the integration’s `_handle_verification_request()`). The table below starts at the SAS `start`.
 
-| # | 事件 | 谁处理 | 动作 |
-|---|---|---|
-| 1 | `start`（Element → bot） | nio `handle_key_verification` | 查 `device_store`（靠 `_query_device_keys` 预热）；命中则 `Sas.from_key_verification_start` 建 `Sas(we_started_it=False, state=started)` 并注册 `key_verifications[txn]`；**miss 则丢弃该 start 并加 `users_for_key_query`** |
-| 2 | — | 集成 `handle_to_device_event("start")` | 若 nio 已丢弃该 start（设备未知），`_repair_dropped_start()` 查 key 后重喂 start 让 nio 建 SAS；随后 `accept_key_verification()` 发 `accept` |
-| 3 | `key`（Element → bot） | nio `handle_key_verification` | `receive_key_event()` 建立共享密钥；`not we_started_it` → 自动 `share_key()` 入队 |
-| 4 | — | `sync_forever` | `send_to_device_messages()` 发出 bot 的 `key` |
-| 5 | — | 集成 `handle_to_device_event("key")` | 发 `stage: sas`（含 emoji） |
-| 6 | 用户调 `confirm_verification` | 集成 `async_confirm_verification` | `confirm_short_auth_string()` → `accept_sas()` + `get_mac()`，发 bot 的 `mac` |
-| 7 | `mac`（Element → bot） | nio `handle_key_verification` | `receive_mac_event()` 校验，`verified` → `verify_device()` |
-| 8 | — | 集成 `handle_to_device_event("mac")` | `verified` 为真 → 补发 `m.key.verification.done`（to-device）+ 发 `stage: done` |
-| 9 | `done`（bot → Element） | Element | 收到 `done` 从 `WaitingForDone` 转 `Done`，验证完成 |
-
-### 方向 B：机器人发起（bot-initiated，`we_started_it=True`）
-
-| # | 事件 | 谁处理 | 动作 |
+| # | Event | Who handles it | Action |
 |---|---|---|---|
-| 1 | 用户调 `start_verification` | 集成 `async_start_verification` | `start_key_verification()` 建 `Sas(we_started_it=True, state=created)` 并发 `start` |
-| 2 | `accept`（Element → bot） | nio `handle_key_verification` | `receive_accept_event()` → 自动 `share_key()` 入队（initiator 先发 key） |
-| 3 | `key`（Element → bot） | nio `handle_key_verification` | `receive_key_event()`；`we_started_it` 为真 → 不再 share |
-| 4 | — | 集成 `handle_to_device_event("key")` | 发 `stage: sas` |
-| 5 | 用户调 `confirm_verification` | 集成 `async_confirm_verification` | `confirm_short_auth_string()` 发 `mac` |
-| 6 | `mac`（Element → bot） | nio `handle_key_verification` | `receive_mac_event()` → `verify_device()` |
-| 7 | — | 集成 `handle_to_device_event("mac")` | `verified` → 补发 `m.key.verification.done` + 发 `stage: done`（start 流下 Element 安全忽略 done） |
+| 1 | `start` (Element → bot) | nio `handle_key_verification` | Looks up `device_store` (warmed by `_query_device_keys`); on hit, `Sas.from_key_verification_start` builds `Sas(we_started_it=False, state=started)` and registers `key_verifications[txn]`; **on miss, drops the start and adds `users_for_key_query`** |
+| 2 | — | integration `handle_to_device_event("start")` | If nio already dropped the start (unknown device), `_repair_dropped_start()` queries keys and re-feeds start so nio builds SAS; then `accept_key_verification()` sends `accept` |
+| 3 | `key` (Element → bot) | nio `handle_key_verification` | `receive_key_event()` establishes the shared secret; `not we_started_it` → auto `share_key()` enqueues |
+| 4 | — | `sync_forever` | `send_to_device_messages()` sends the bot’s `key` |
+| 5 | — | integration `handle_to_device_event("key")` | Fires `stage: sas` (with emoji) |
+| 6 | User calls `confirm_verification` | integration `async_confirm_verification` | `confirm_short_auth_string()` → `accept_sas()` + `get_mac()`, sends the bot’s `mac` |
+| 7 | `mac` (Element → bot) | nio `handle_key_verification` | `receive_mac_event()` verifies; `verified` → `verify_device()` |
+| 8 | — | integration `handle_to_device_event("mac")` | If `verified`, send extra `m.key.verification.done` (to-device) + fire `stage: done` |
+| 9 | `done` (bot → Element) | Element | Receiving `done` moves `WaitingForDone` → `Done`; verification complete |
 
-### 关键事实
+### Direction B: bot initiates (`we_started_it=True`)
 
-- **request/ready 由集成桥接**：matrix-nio 0.26.0 没有 `m.key.verification.request` / `ready` 处理（request 被解析成 `UnknownToDeviceEvent` 丢弃）。现代 Element 走 `request → ready → start …`，集成 `_handle_verification_request()` 负责校验 request 并回 `ready`，之后才由 nio 的 SAS 状态机接管 `start`。
-- **集成不处理 `accept`**：`_verification_kind()` 只映射 `start/key/mac/cancel`，`accept` 由 nio 内部状态机自动处理（方向 B 的 #2）。
-- **key 的发送归 nio 管**：无论哪个方向，bot 的 `key` 都由 nio 内部 `share_key()` 入队、`sync_forever` 发出；集成**不应**手动 `share_key`。
-- **mac 只由 `confirm_verification` 服务发送一次**：`confirm_short_auth_string()` 内部已 `accept_sas()` + `get_mac()`。
-- **done 由集成在 `sas.verified` 变 True 时补发**：matrix-nio 0.26.0 无 `m.key.verification.done` 支持，request 流下 Element 收到 MAC 后进入 `WaitingForDone` 等待 HA 的 `done`。集成 `_send_verification_done()` 在两处（`async_confirm_verification` verified 分支 + `handle_to_device_event` mac 分支）无条件补发；start 流下 Element 走 `Done` 态无 `done` 转移，安全忽略。
-- **已知问题（见对应 issue）**：
-  - **W1N-169**：~~当前实现对 key 和 mac 各多发一次（方向 A 中集成手动 `share_key`、`mac` handler 里 `_try_confirm` 重复发 mac）。~~ 已修复：key 由 nio 内部状态机在收到 peer key 时统一发送，mac 仅由 `confirm_verification` 发送。
-  - **W1N-170**：~~bot 上线后才新增的设备，第一次 SAS 的 `start` 会被 nio 丢弃（"unknown device"），需重试一次。~~ 已修复：`_repair_dropped_start()` 在收到未知设备的 `start` 时自动查 key 并重喂，无需手动重试。
-  - **W1N-172**：~~nio 0.26.0 的 `Sas._last_event_time` 从不刷新，SAS 在创建 60s 后必然超时（即使人还在比对 emoji）。~~ 已修复：`_patch_nio_sas_timeout()` monkeypatch `timed_out` 忽略失效的 60s 事件超时，只保留 5min 总超时；集成自己的超时对齐为 4min。
-  - **W1N-173**：~~matrix-nio 0.26.0 缺 `request`/`ready` 握手，Element 的验证请求在第一步就被丢弃，最终只收到 `cancel`。~~ 已修复（P0）：`_handle_verification_request()` 校验 request 并回 `ready`，让 Element 继续发 `start`。
-  - **W1N-183**：~~matrix-nio 0.26.0 无 `m.key.verification.done` 支持，request 流在 MAC 交换后 Element 卡在 `WaitingForDone` 等不到 HA 的 `done` 直到超时。~~ 已修复：`_send_verification_done()` 在 `sas.verified` 变 True 时补发 `done`，Element 完成最后一步。
-  - **W1N-171**：SAS 全链路从未在真实 Matrix homeserver 上做过端到端验证（现有测试全用 FakeNio）。暂缓解决。
+| # | Event | Who handles it | Action |
+|---|---|---|---|
+| 1 | User calls `start_verification` | integration `async_start_verification` | `start_key_verification()` builds `Sas(we_started_it=True, state=created)` and sends `start` |
+| 2 | `accept` (Element → bot) | nio `handle_key_verification` | `receive_accept_event()` → auto `share_key()` enqueues (initiator sends key first) |
+| 3 | `key` (Element → bot) | nio `handle_key_verification` | `receive_key_event()`; `we_started_it` is true → no further share |
+| 4 | — | integration `handle_to_device_event("key")` | Fires `stage: sas` |
+| 5 | User calls `confirm_verification` | integration `async_confirm_verification` | `confirm_short_auth_string()` sends `mac` |
+| 6 | `mac` (Element → bot) | nio `handle_key_verification` | `receive_mac_event()` → `verify_device()` |
+| 7 | — | integration `handle_to_device_event("mac")` | `verified` → send extra `m.key.verification.done` + fire `stage: done` (on the start flow Element safely ignores done) |
+
+### Key facts
+
+- **request/ready is bridged by the integration**: matrix-nio 0.26.0 has no `m.key.verification.request` / `ready` handling (request is parsed as `UnknownToDeviceEvent` and dropped). Modern Element uses `request → ready → start …`. `_handle_verification_request()` validates the request and replies `ready`; nio’s SAS state machine then takes over at `start`.
+- **The integration does not handle `accept`**: `_verification_kind()` only maps `start/key/mac/cancel`. `accept` is handled by nio’s internal state machine (direction B #2).
+- **Sending `key` is nio’s job**: in both directions the bot’s `key` is enqueued by nio’s internal `share_key()` and sent by `sync_forever`. The integration **must not** call `share_key` itself.
+- **`mac` is sent once, only by the `confirm_verification` service**: `confirm_short_auth_string()` already does `accept_sas()` + `get_mac()`.
+- **`done` is sent by the integration when `sas.verified` becomes True**: matrix-nio 0.26.0 has no `m.key.verification.done` support. On the request flow, after MAC exchange Element enters `WaitingForDone` waiting for HA’s `done`. `_send_verification_done()` sends it unconditionally from two places (`async_confirm_verification` verified branch + `handle_to_device_event` mac branch). On the start flow Element’s `Done` state has no `done` transition and safely ignores it.
+- **Known issues (see the matching tickets)**:
+  - **W1N-169**: ~~The current implementation sent key and mac twice each (direction A: integration called `share_key` by hand; the `mac` handler’s `_try_confirm` sent mac again).~~ Fixed: key is sent by nio’s internal state machine when the peer key arrives; mac is sent only by `confirm_verification`.
+  - **W1N-170**: ~~A device added only after the bot came online had its first SAS `start` dropped by nio (“unknown device”); you had to retry.~~ Fixed: `_repair_dropped_start()` queries keys and re-feeds `start` for an unknown device; no manual retry.
+  - **W1N-172**: ~~nio 0.26.0 never refreshes `Sas._last_event_time`, so SAS always timed out 60s after creation (even while a human was still comparing emoji).~~ Fixed: `_patch_nio_sas_timeout()` monkeypatches `timed_out` to ignore the broken 60s event timeout and keep only the 5 min overall timeout; the integration’s own timeout is aligned at 4 min.
+  - **W1N-173**: ~~matrix-nio 0.26.0 lacked the `request`/`ready` handshake, so Element’s verification request was dropped at step 1 and the only thing received was `cancel`.~~ Fixed (P0): `_handle_verification_request()` validates the request and replies `ready`, so Element continues with `start`.
+  - **W1N-183**: ~~matrix-nio 0.26.0 has no `m.key.verification.done` support; after MAC exchange on the request flow Element stuck in `WaitingForDone` waiting for HA’s `done` until timeout.~~ Fixed: `_send_verification_done()` sends `done` when `sas.verified` becomes True, so Element finishes the last step.
+  - **W1N-171**: SAS has never been end-to-end tested against a real Matrix homeserver (existing tests all use FakeNio). Deferred.

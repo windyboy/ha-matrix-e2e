@@ -29,10 +29,10 @@ mkdir -p /config/custom_components
 cp -a custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
 
-**From git** (replace `v0.3.9` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
+**From git** (replace `v0.3.10` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
 
 ```bash
-git clone --depth 1 --branch v0.3.9 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
+git clone --depth 1 --branch v0.3.10 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
 mkdir -p /config/custom_components
 cp -a /tmp/ha-matrix-e2ee/custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
@@ -143,7 +143,7 @@ Commands fire Home Assistant events only. This integration never calls `domain.s
 
 ## Device verification
 
-Device verification has an in-UI wizard (v0.3+): **Settings → Devices & Services → Matrix E2EE → Configure → Verify device**. Two paths are supported; see [SECURITY.md](SECURITY.md) for the trust model and [docs/DEVICE_VERIFICATION.md](docs/DEVICE_VERIFICATION.md) for a step-by-step walkthrough.
+Device verification has an in-UI wizard (v0.3+): **Settings → Devices & Services → Matrix E2EE → Configure → Verify device**. Two paths are supported; see [SECURITY.md](SECURITY.md) for the trust model and [docs/DEVICE_VERIFICATION.md](docs/DEVICE_VERIFICATION.md) ([中文](docs/DEVICE_VERIFICATION.zh.md)) for a step-by-step walkthrough.
 
 ### 1. SAS (mutual, manual confirmation)
 
@@ -160,7 +160,7 @@ Every device — including another device of the bot's own account — requires 
 2. In Element, open the bot user's sessions and use "Manually verify by text".
 3. Compare the session key with the fingerprint. This trusts the bot from Element's side only; to trust a device from the bot's side, call `matrix_e2ee.verify_device_by_fingerprint` with the device's `ed25519` key. It is trusted only on an exact match.
 
-SAS interoperability with Element relies on four runtime patches to `matrix-nio` 0.26.0; see [docs/NIO_COMPAT.md](docs/NIO_COMPAT.md).
+SAS interoperability with Element relies on four runtime patches to `matrix-nio` 0.26.0; see [docs/NIO_COMPAT.md](docs/NIO_COMPAT.md) ([中文](docs/NIO_COMPAT.zh.md)).
 
 ## Recovery runbook
 
