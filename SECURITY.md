@@ -59,7 +59,7 @@ For operational steps, see [Device verification](docs/DEVICE_VERIFICATION.md). F
 1. Stop Home Assistant on the old host (or disable this integration) so the bot is not connected from two places.
 2. Copy both the session file and the crypto store directory to the same paths on the new host.
 3. Install the same `matrix_e2ee` version and restart.
-4. The existing config entry should restore the same `device_id` and trust state. If either file is missing or the pair does not match, treat it as a new device and re-verify.
+4. Re-add the integration through **Settings → Devices & Services** (the flow still asks for a password; with the session file present, the client restores the same `device_id` instead of creating a new one). If either file is missing or the pair does not match, treat it as a new device and re-verify.
 
 ## Leaked keys or stolen host
 

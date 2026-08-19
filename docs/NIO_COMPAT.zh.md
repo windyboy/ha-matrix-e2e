@@ -71,7 +71,7 @@ matrix-nio 0.26.0 只协商 `hkdf-hmac-sha256`（v1），但默认调用 `calcul
 6. 仅删除已由上游正确实现的对应修正，不要一次性移除整个兼容层。
 7. 运行 `tests/test_nio_compat.py` 和完整测试套件。
 8. 使用真实 Matrix homeserver 与 Element 完成一次双向 SAS 验证。
-9. 更新本文档中已确认可用的版本范围。
+9. 在**三处同步**更新已确认可用的版本：本文档、`nio_compat.py` 中的 `NIO_COMPAT_VERSION`、`manifest.json` 中的 `matrix-nio[e2e]==…` 固定版本。
 
 ## 相关文档
 

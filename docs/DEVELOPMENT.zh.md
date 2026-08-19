@@ -34,8 +34,9 @@ uv run python -m pytest
 | M1–M4 契约 | `tests/test_m1_contract.py` 至 `tests/test_m4_contract.py` |
 | Config、Options、Reauth、Import | `tests/test_config_flow.py`、`tests/test_options_flow.py`、`tests/test_reauth.py`、`tests/test_import.py` |
 | Config Entry 生命周期 | `tests/test_entry_lifecycle.py`、`tests/test_manifest.py` |
+| 诊断、URL、品牌、连接传感器 | `tests/test_diagnostics.py`、`tests/test_url.py`、`tests/test_brand.py`、`tests/test_binary_sensor.py` |
 | matrix-nio 兼容层 | `tests/test_nio_compat.py` |
-| 共用测试替身 | `tests/fakes.py` |
+| 共用测试夹具 / 替身 | `tests/conftest.py`、`tests/fakes.py` |
 
 运行完整测试：
 

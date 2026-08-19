@@ -61,6 +61,7 @@
 | `invalid_transaction` | 使用最新验证事件中的 `transaction_id` |
 | emoji 不一致 | 立即取消，核对账号和目标设备后重试；持续异常时再调查账号或通信链路风险 |
 | 重启后设备 ID 改变 | 加密存储可能已丢失；这是一个新设备，需要重新验证 |
+| `session_corrupt` / `restore_failed` | 删除 session 文件（若加密存储不一致也一并删除），移除集成后重新添加，然后重新验证 |
 
 会话和加密存储必须与 Home Assistant 配置目录一起持久化。恢复同一份存储时，重启不会丢失设备 ID 和验证状态。
 

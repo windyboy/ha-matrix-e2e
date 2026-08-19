@@ -12,7 +12,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Ship bilingual EN/ZH operator and maintainer docs under `docs/`.
 - Align README with released v0.3.x behavior: error-code table, Connection diagnostic entity, diagnostics fields, URL normalization rules, automation examples, recovery/migration notes.
 
-## [0.3.9] - 2026-08-18
+## [0.3.9] - 2026-08-19
 
 ### Added / Changed (W1N-190)
 
@@ -25,7 +25,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `nio_compat.py` extraction with version guard.
 - CI quality gates: ruff, coverage threshold, pip-audit on runtime requirements.
 
-## [0.3.8] - 2026-08
+## [0.3.8] - 2026-08-18
 
 ### Added
 

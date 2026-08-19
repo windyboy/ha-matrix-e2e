@@ -188,7 +188,7 @@ Admin-only services are enforced by Home Assistant's admin-service helper.
 | Event | Payload (no secrets) |
 |---|---|
 | `matrix_e2ee_command` | `room_id`, `sender`, `command`, `args` only — never the raw body |
-| `matrix_e2ee_error` | Error codes only (see [Error codes](#error-codes)) |
+| `matrix_e2ee_error` | `code` plus non-secret context fields (see [Error codes](#error-codes)) |
 | `matrix_e2ee_verification` | `stage`, `transaction_id`, `user_id`, `device_id`; optional `emojis`, `expires_at` |
 | `matrix_e2ee_fingerprint` | `user_id`, `device_id`, `ed25519`, `curve25519` — public keys only |
 
@@ -359,7 +359,7 @@ Treat this as a new device. The session JSON is not enough to recover Megolm his
 1. Stop Home Assistant on the old host (or disable the integration) so the bot is not connected from two places.
 2. Copy **both** `<config>/.storage/matrix_e2ee_session.json` and `<config>/.storage/matrix_e2ee_store/` to the same paths on the new host. They must stay a matched pair.
 3. Install the same `matrix_e2ee` version under `custom_components` on the new host and restart.
-4. The existing config entry should restore the same `device_id` and trust state. If the store or session is missing or mismatched, treat it as a new device and re-verify.
+4. Re-add the integration through **Settings → Devices & Services** (the flow still asks for a password; with the session file present, the client restores the same `device_id` instead of creating a new one). If the store or session is missing or mismatched, treat it as a new device and re-verify.
 
 ### Short-lived / refresh tokens (`refresh_token_unsupported`)
 
