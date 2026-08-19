@@ -29,3 +29,16 @@ To run in a worktree, symlink the project's venv so uv keeps using it:
 ln -sfn /path/to/project/.venv <worktree>/.venv
 uv run python --version        # must still print Python 3.14.x
 ```
+
+## Tests and SAS changes
+
+Run a subset when iterating:
+
+```bash
+uv run python -m pytest tests/test_nio_compat.py
+uv run python -m pytest tests/test_m3_contract.py tests/test_options_flow.py
+```
+
+Changes to SAS, commitments, emoji, or MAC handling also require a manual end-to-end verification with Element on a real homeserver. See [docs/NIO_COMPAT.md](docs/NIO_COMPAT.md) and [docs/SAS_ARCHITECTURE.md](docs/SAS_ARCHITECTURE.md).
+
+When editing documentation, keep English and Chinese counterparts in sync where both exist. Runtime dependency pins live only in `manifest.json` and `requirements-dev.txt` — do not duplicate full requirement lists in docs.
