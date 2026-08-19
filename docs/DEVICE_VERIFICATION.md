@@ -61,6 +61,7 @@ Fingerprints are case-sensitive. Trust is established only on an exact match; ot
 | `invalid_transaction` | Use the `transaction_id` from the latest verification event |
 | The emoji differ | Cancel immediately, check the account and target device, then retry; investigate account or transport compromise if it persists |
 | The device ID changed after restart | The crypto store may have been lost; treat it as a new device and verify again |
+| `session_corrupt` / `restore_failed` | Delete the session file (and store if inconsistent), remove the integration, add it again, then re-verify |
 
 The session and crypto store must persist with the Home Assistant configuration directory. Restoring the same store preserves the device ID and verification state across restarts.
 
