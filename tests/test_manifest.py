@@ -47,4 +47,4 @@ def test_manifest_declares_matrix_nio_with_e2e_extra() -> None:
 def test_manifest_explicitly_lists_e2ee_extra_dependencies() -> None:
     manifest = _load_manifest()
     names = {_base_name(req) for req in manifest["requirements"]}
-    assert E2EE_EXTRA_DEPS <= names
+    assert names >= E2EE_EXTRA_DEPS

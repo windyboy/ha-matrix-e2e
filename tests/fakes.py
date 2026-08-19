@@ -12,7 +12,9 @@ class LoginError:
 class WhoamiError:
     """Name must end with Error so the client treats it as a failed nio response."""
 
-    def __init__(self, *, soft_logout=False, status_code=401, errcode="M_UNKNOWN_TOKEN"):
+    def __init__(
+        self, *, soft_logout=False, status_code=401, errcode="M_UNKNOWN_TOKEN"
+    ):
         self.soft_logout = soft_logout
         self.status_code = status_code
         self.errcode = errcode
@@ -27,7 +29,9 @@ class UnverifiedDeviceError(Exception):
 
 
 class FakeOlmDevice:
-    def __init__(self, user_id, device_id, verified=False, ed25519="ED25519_DEVICE_KEY"):
+    def __init__(
+        self, user_id, device_id, verified=False, ed25519="ED25519_DEVICE_KEY"
+    ):
         self.user_id = user_id
         self.device_id = device_id
         self.verified = verified
@@ -57,12 +61,16 @@ class FakeSas:
         return list(self.emojis)
 
     def share_key(self):
-        return SimpleNamespace(type="m.key.verification.key", transaction_id=self.transaction_id)
+        return SimpleNamespace(
+            type="m.key.verification.key", transaction_id=self.transaction_id
+        )
 
     def get_mac(self):
         if not self.sas_accepted:
             raise LocalProtocolError("SAS string wasn't yet accepted")
-        return SimpleNamespace(type="m.key.verification.mac", transaction_id=self.transaction_id)
+        return SimpleNamespace(
+            type="m.key.verification.mac", transaction_id=self.transaction_id
+        )
 
     def accept_sas(self):
         self.sas_accepted = True
@@ -113,7 +121,9 @@ class FakeOlm:
             if sender:
                 self.users_for_key_query.add(sender)
             return
-        nio.key_verifications[txn] = FakeSas(txn, sender, from_device, we_started_it=False)
+        nio.key_verifications[txn] = FakeSas(
+            txn, sender, from_device, we_started_it=False
+        )
 
 
 class FakeNio:
@@ -337,7 +347,9 @@ class FakeNio:
         return object()
 
     async def to_device(self, message, tx_id=None):
-        self.to_device_sent.append({"op": "to_device", "message": message, "tx_id": tx_id})
+        self.to_device_sent.append(
+            {"op": "to_device", "message": message, "tx_id": tx_id}
+        )
         return object()
 
     async def sync(self, timeout=0, full_state=None):
@@ -355,7 +367,7 @@ class FakeNio:
                 "callback_count": len(self.callbacks),
             }
         )
-        return None
+        return
 
     async def close(self):
         self.closed = True

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -19,8 +19,8 @@ try:
 except ImportError:  # pragma: no cover — HA < 2025.2
     OptionsFlowWithReload = OptionsFlow  # type: ignore[assignment,misc]
 
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 import homeassistant.helpers.config_validation as cv
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 
 from .client import MatrixE2EEClient, MatrixE2EEError
 from .const import (
@@ -36,6 +36,8 @@ from .const import (
     ERROR_VERIFICATION_TIMEOUT,
     VERIFICATION_TIMEOUT_SECONDS,
 )
+from .storage import quarantine_session, quarantine_store
+from .url import HomeserverURLInvalid, homeserver_origin, normalize_homeserver
 
 # OptionsFlowWithReload schedules the entry reload automatically when options
 # change. On older HA where it is absent we fall back to plain OptionsFlow and
@@ -62,16 +64,27 @@ def _base_error(code: str) -> str:
     return "cannot_connect"
 
 
+def _homeserver_error(reason: str) -> str:
+    if reason == "http_not_allowed":
+        return "homeserver_http_not_allowed"
+    if reason == "credentials":
+        return "homeserver_credentials"
+    return "homeserver_invalid"
+
+
 def _csv_to_list(value: str) -> list[str]:
     """Split a comma-separated string into a trimmed, non-empty list."""
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _format_emojis(emojis: list[list[str]] | None) -> str:
-    """Render SAS emoji/number pairs for the compare step."""
+    """Render SAS emoji/number pairs as a numbered list for the compare step."""
     if not emojis:
         return ""
-    return "\n".join(f"{emoji}  {name}" for emoji, name in emojis)
+    return "\n".join(
+        f"{index}. {emoji}  {name}"
+        for index, (emoji, name) in enumerate(emojis, start=1)
+    )
 
 
 class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -86,19 +99,28 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                await self._ensure_login(user_input)
-            except MatrixE2EEError as err:
-                errors["base"] = _base_error(err.code)
-            else:
-                await self.async_set_unique_id(user_input[CONF_USERNAME])
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=user_input[CONF_USERNAME],
-                    data={
-                        CONF_HOMESERVER: user_input[CONF_HOMESERVER],
-                        CONF_USERNAME: user_input[CONF_USERNAME],
-                    },
+                user_input[CONF_HOMESERVER] = normalize_homeserver(
+                    user_input[CONF_HOMESERVER]
                 )
+            except HomeserverURLInvalid as err:
+                errors["base"] = _homeserver_error(err.reason)
+            else:
+                try:
+                    await self._ensure_login(user_input)
+                except MatrixE2EEError as err:
+                    errors["base"] = _base_error(err.code)
+                else:
+                    if self._async_current_entries():
+                        return self.async_abort(reason="already_configured")
+                    await self.async_set_unique_id(user_input[CONF_USERNAME])
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=user_input[CONF_USERNAME],
+                        data={
+                            CONF_HOMESERVER: user_input[CONF_HOMESERVER],
+                            CONF_USERNAME: user_input[CONF_USERNAME],
+                        },
+                    )
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
@@ -111,21 +133,27 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="unknown")
         username = import_info[CONF_USERNAME]
         try:
+            homeserver = normalize_homeserver(import_info[CONF_HOMESERVER])
+        except HomeserverURLInvalid:
+            return self.async_abort(reason="unknown")
+        try:
             await self._ensure_login(
                 {
-                    CONF_HOMESERVER: import_info[CONF_HOMESERVER],
+                    CONF_HOMESERVER: homeserver,
                     CONF_USERNAME: username,
                     CONF_PASSWORD: import_info.get(CONF_PASSWORD),
                 }
             )
         except MatrixE2EEError:
             return self.async_abort(reason="login_failed")
+        if self._async_current_entries():
+            return self.async_abort(reason="already_configured")
         await self.async_set_unique_id(username)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
             title=username,
             data={
-                CONF_HOMESERVER: import_info[CONF_HOMESERVER],
+                CONF_HOMESERVER: homeserver,
                 CONF_USERNAME: username,
             },
             options={
@@ -143,7 +171,13 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Allow editing the homeserver (username stays read-only)."""
+        """Allow editing the homeserver (username stays read-only).
+
+        A change to the homeserver *origin* (scheme/host/port) is a new-device
+        event: the old access token and crypto store must never be presented to
+        the new server. We quarantine them and require a fresh password login.
+        A same-origin edit (e.g. a trailing slash) keeps the session.
+        """
         entry = self._get_reconfigure_entry()
         if user_input is None:
             return self.async_show_form(
@@ -156,8 +190,61 @@ class MatrixE2EEConfigFlow(ConfigFlow, domain=DOMAIN):
                     }
                 ),
             )
-        return self.async_update_reload_and_abort(
-            entry, data_updates={CONF_HOMESERVER: user_input[CONF_HOMESERVER]}
+        try:
+            new_homeserver = normalize_homeserver(user_input[CONF_HOMESERVER])
+        except HomeserverURLInvalid as err:
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(
+                            CONF_HOMESERVER, default=entry.data[CONF_HOMESERVER]
+                        ): cv.string,
+                    }
+                ),
+                errors={"base": _homeserver_error(err.reason)},
+            )
+        old_homeserver = entry.data.get(CONF_HOMESERVER, "")
+        if homeserver_origin(new_homeserver) == homeserver_origin(old_homeserver):
+            return self.async_update_reload_and_abort(
+                entry, data_updates={CONF_HOMESERVER: new_homeserver}
+            )
+        # Origin changed: the old token/store must never reach the new server.
+        quarantine_session(self.hass.config.path())
+        quarantine_store(self.hass.config.path())
+        self._reconfigure_homeserver = new_homeserver
+        return self.async_show_form(
+            step_id="reconfigure_new_device",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): cv.string}),
+        )
+
+    async def async_step_reconfigure_new_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Require fresh credentials after a homeserver origin change."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                await self._ensure_login(
+                    {
+                        CONF_HOMESERVER: self._reconfigure_homeserver,
+                        CONF_USERNAME: self._get_reconfigure_entry().data[
+                            CONF_USERNAME
+                        ],
+                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    }
+                )
+            except MatrixE2EEError as err:
+                errors["base"] = _base_error(err.code)
+            else:
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(),
+                    data_updates={CONF_HOMESERVER: self._reconfigure_homeserver},
+                )
+        return self.async_show_form(
+            step_id="reconfigure_new_device",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): cv.string}),
+            errors=errors,
         )
 
     @staticmethod
@@ -362,10 +449,8 @@ class MatrixE2EEOptionsFlow(OptionsFlowWithReload):
         txn = self._txn
         self._txn = None
         if client is not None and txn is not None:
-            try:
+            with contextlib.suppress(MatrixE2EEError):
                 await client.async_cancel_verification(txn)
-            except MatrixE2EEError:
-                pass
         return self.async_abort(reason="verification_canceled")
 
     async def async_step_wait_done(

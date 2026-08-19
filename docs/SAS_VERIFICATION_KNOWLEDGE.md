@@ -199,21 +199,21 @@ start；后续 accept/key/emoji 同方向 A；比对后同样 `confirm_verificat
 
 ## 4. 代码地图（`custom_components/matrix_e2ee/`）
 
-### client.py（1690 行；无 models.py，模型在此文件）
+### client.py（约 1450 行；SAS 补丁已移至 `nio_compat.py`，模型在此文件）
 
-**nio 补丁区（167–398）**：
+**nio 补丁区（已移至 `nio_compat.py`，入口 `apply_nio_compat_patches()`）**：
 
-| 函数 | 行 | 作用 |
-|---|---|---|
-| `_apply_sas_timeout_patch` | 167 | monkeypatch `Sas.timed_out`：verified/canceled→False；`now-creation ≥ _max_age(5min)`→canceled+`_timeout_error`+True。**忽略 nio 60s 事件超时 bug** |
-| `_sas_commitment(pubkey, canonical)` | 200 | SHA-256(pubkey+canonical) 的 unpadded base64 |
-| `_apply_sas_commitment_patch` | 211 | patch `from_key_verification_start`（accept commitment）+ `_check_commitment`（initiator 校验）→ unpadded base64 |
-| `_apply_sas_emoji_patch` | 259 | `_generate_emoji` 直接用 `established_sas.bytes(info).emoji_indices` 映射，不做 bit-slicing |
-| `_apply_sas_mac_patch` | 289 | 见下 |
-| `_select_mac_func` | 307 | `chosen_mac_method=="hkdf-hmac-sha256"` → `calculate_mac_invalid_base64`，否则 `calculate_mac` |
-| `get_mac`（patch） | 312 | `sas_accepted=False`/canceled 抛 `LocalProtocolError`；按规范拼 info、`ed25519:{own_device}` + `KEY_IDS` |
-| `receive_mac_event`（patch） | 342 | verified→return；`state!=key_received`→canceled；KEY_IDS 校验→`_key_mismatch_error`；逐 key device_id 匹配 + MAC 校验 → verified_devices；空→canceled（**已加 return，W1N-179 已修复**） |
-| `_patch_nio_sas_timeout/_commitment/_emoji/_mac` | 191/249/280/394 | `try: from nio … except Exception: return`（测试无 nio 时 no-op） |
+| 函数 | 作用 |
+|---|---|
+| `_apply_sas_timeout_patch` | monkeypatch `Sas.timed_out`：verified/canceled→False；`now-creation ≥ _max_age(5min)`→canceled+`_timeout_error`+True。**忽略 nio 60s 事件超时 bug** |
+| `_sas_commitment(pubkey, canonical)` | SHA-256(pubkey+canonical) 的 unpadded base64 |
+| `_apply_sas_commitment_patch` | patch `from_key_verification_start`（accept commitment）+ `_check_commitment`（initiator 校验）→ unpadded base64 |
+| `_apply_sas_emoji_patch` | `_generate_emoji` 直接用 `established_sas.bytes(info).emoji_indices` 映射，不做 bit-slicing |
+| `_apply_sas_mac_patch` | 见下 |
+| `_select_mac_func` | `chosen_mac_method=="hkdf-hmac-sha256"` → `calculate_mac_invalid_base64`，否则 `calculate_mac` |
+| `get_mac`（patch） | `sas_accepted=False`/canceled 抛 `LocalProtocolError`；按规范拼 info、`ed25519:{own_device}` + `KEY_IDS` |
+| `receive_mac_event`（patch） | verified→return；`state!=key_received`→canceled；KEY_IDS 校验→`_key_mismatch_error`；逐 key device_id 匹配 + MAC 校验 → verified_devices；空→canceled（**已加 return，W1N-179 已修复**） |
+| `_patch_nio_sas_timeout/_commitment/_emoji/_mac` | `try: from nio … except Exception: return`（测试无 nio 时 no-op） |
 
 **验证服务（952–1690）**：
 
@@ -346,7 +346,7 @@ ACCEPT/KEY/MAC/DONE/CANCEL` 类型串。
 - setup/stop/reauth async lock：未见竞态，低价值。
 - 事务绑定（预期 user/device/创建时间）：已由 nio `key_verifications` + 集成超时覆盖。
 - CI manifest 依赖校验：HA 安装期已校验 manifest 依赖。
-- ruff / 静态检查：项目当前无配置。
+- ruff / 静态检查：**已配置**（`ruff.toml` + CI lint 任务，W1N-198）。
 
 **Backlog（避免重复工作，动手前先查这 1 条）**：
 1. **W1N-171** — 真实 homeserver 端到端 SAS 测试（docker Synapse 或人工 runbook）。

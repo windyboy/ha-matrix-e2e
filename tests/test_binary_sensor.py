@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import pytest
-
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity import EntityCategory
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components.matrix_e2ee as matrix_e2ee
+from custom_components.matrix_e2ee.binary_sensor import MatrixE2EEConnectivitySensor
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
 from custom_components.matrix_e2ee.const import CONF_HOMESERVER, CONF_USERNAME, DOMAIN
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from tests.fakes import FakeNio
 
 HS = "https://matrix.example.org"
@@ -90,6 +92,10 @@ async def test_binary_sensor_reports_connected(
 
     entity_id = state.entity_id
 
+    # The connectivity sensor is a diagnostic entity.
+    registry_entry = er.async_get(hass).entities[entity_id]
+    assert registry_entry.entity_category is EntityCategory.DIAGNOSTIC
+
     assert await hass.config_entries.async_unload(entry.entry_id) is True
     await hass.async_block_till_done()
 
@@ -114,5 +120,45 @@ async def test_connection_health_soft_logout(
     client._soft_logged_out = True
     assert client.connection_health()["connected"] is False
     assert client.connection_health()["soft_logged_out"] is True
+
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_connection_health_reports_verified_peer_counts(
+    hass: HomeAssistant, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(matrix_e2ee, "_NIO_CLIENT_FACTORY", FakeNio)
+    await _seed_session(tmp_path)
+    entry = _make_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id) is True
+    await hass.async_block_till_done()
+
+    client = hass.data[DOMAIN][entry.entry_id]
+
+    # Empty store -> zero counts, empty peer list.
+    empty = client.connection_health()
+    assert empty["known_device_count"] == 0
+    assert empty["verified_peer_count"] == 0
+    assert empty["verified_peers"] == []
+
+    # Two peer devices, one verified. The bot's own device is never counted.
+    nio = client.nio
+    nio.add_device("@peer1:example.org", "PEER1ABC", verified=False)
+    nio.add_device("@peer2:example.org", "PEER2ABC", verified=True)
+
+    health = client.connection_health()
+    assert health["known_device_count"] == 2
+    assert health["verified_peer_count"] == 1
+    assert health["verified_peers"] == [
+        {"user_id": "@peer2:example.org", "device_id": "PEER2ABC"}
+    ]
+
+    # The sensor mirrors the counts and never leaks key material.
+    sensor = MatrixE2EEConnectivitySensor(client, entry)
+    attrs = sensor.extra_state_attributes
+    assert attrs["known_device_count"] == 2
+    assert attrs["verified_peer_count"] == 1
+    for secret in ("ed25519", "curve25519", "key", "token", "pickle", "secret"):
+        assert secret not in str(attrs["verified_peers"]).lower()
 
     await hass.config_entries.async_unload(entry.entry_id)

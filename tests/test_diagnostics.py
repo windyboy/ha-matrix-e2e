@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components.matrix_e2ee as matrix_e2ee
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
@@ -12,7 +12,6 @@ from custom_components.matrix_e2ee.const import CONF_HOMESERVER, CONF_USERNAME, 
 from custom_components.matrix_e2ee.diagnostics import (
     async_get_config_entry_diagnostics,
 )
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from tests.fakes import FakeNio
 
 HS = "https://matrix.example.org"
@@ -28,6 +27,8 @@ SAFE_FIELDS = {
     "soft_logged_out",
     "encryption_enabled",
     "store_sync_tokens",
+    "known_device_count",
+    "verified_peer_count",
 }
 
 

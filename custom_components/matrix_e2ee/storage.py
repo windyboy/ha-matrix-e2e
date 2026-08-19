@@ -15,10 +15,12 @@ The session file is written only after a successful first login.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import contextlib
 import json
 import logging
 import os
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -98,9 +100,7 @@ def load_session(config_dir: str | Path) -> MatrixSession | None:
         data = json.loads(raw)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
         _LOGGER.error("matrix_e2ee session file is unreadable or not JSON")
-        raise SessionError(
-            ERROR_SESSION_CORRUPT, "session file is corrupt"
-        ) from err
+        raise SessionError(ERROR_SESSION_CORRUPT, "session file is corrupt") from err
     if not isinstance(data, dict):
         _LOGGER.error("matrix_e2ee session file is not an object")
         raise SessionError(ERROR_SESSION_CORRUPT, "session file is corrupt")
@@ -144,10 +144,8 @@ def atomic_save_session(config_dir: str | Path, session: MatrixSession) -> None:
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
     except OSError:
-        try:
+        with contextlib.suppress(OSError):
             tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise
 
 
@@ -155,8 +153,42 @@ def ensure_store_dir(config_dir: str | Path) -> Path:
     """Create the crypto store directory with restrictive permissions."""
     path = store_path(config_dir)
     path.mkdir(parents=True, exist_ok=True)
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(path, 0o700)
-    except OSError:
-        pass
     return path
+
+
+def _quarantine_suffix() -> str:
+    """Return a timestamped suffix for a quarantined path (no collisions)."""
+    return datetime.now().strftime("%Y%m%dT%H%M%S%f")
+
+
+def quarantine_session(config_dir: str | Path) -> None:
+    """Rename the session file aside so it is never restored against a new origin.
+
+    A homeserver origin change is a new-device event: the old access token and
+    crypto material must never be presented to the new server. Quarantining
+    (rather than deleting) keeps the data recoverable if the change was a
+    mistake, while removing it from the path `load_session` reads.
+    """
+    path = session_path(config_dir)
+    if not path.exists():
+        return
+    target = path.with_name(f"{SESSION_FILENAME}.quarantined-{_quarantine_suffix()}")
+    path.rename(target)
+    _LOGGER.warning(
+        "matrix_e2ee session quarantined after homeserver change: %s", target.name
+    )
+
+
+def quarantine_store(config_dir: str | Path) -> None:
+    """Rename the crypto store aside so it is never attached to a new origin."""
+    path = store_path(config_dir)
+    if not path.is_dir():
+        return
+    target = path.with_name(f"{STORE_DIRNAME}.quarantined-{_quarantine_suffix()}")
+    path.rename(target)
+    _LOGGER.warning(
+        "matrix_e2ee crypto store quarantined after homeserver change: %s",
+        target.name,
+    )

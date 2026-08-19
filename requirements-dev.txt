@@ -1,4 +1,8 @@
-pytest
-pytest-asyncio
-homeassistant
-pytest-homeassistant-custom-component
+pytest==9.0.3
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+coverage==7.15.2
+homeassistant==2026.8.2
+pytest-homeassistant-custom-component==0.13.356
+ruff==0.16.3
+pip-audit==2.10.1

@@ -29,10 +29,10 @@ mkdir -p /config/custom_components
 cp -a custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
 
-**From git** (replace `v0.3.4` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
+**From git** (replace `v0.3.8` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
 
 ```bash
-git clone --depth 1 --branch v0.3.4 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
+git clone --depth 1 --branch v0.3.8 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
 mkdir -p /config/custom_components
 cp -a /tmp/ha-matrix-e2ee/custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
@@ -42,14 +42,22 @@ The installed tree must be:
 ```text
 <config>/custom_components/matrix_e2ee/manifest.json
 <config>/custom_components/matrix_e2ee/__init__.py
+<config>/custom_components/matrix_e2ee/binary_sensor.py
 <config>/custom_components/matrix_e2ee/client.py
 <config>/custom_components/matrix_e2ee/config_flow.py
 <config>/custom_components/matrix_e2ee/const.py
+<config>/custom_components/matrix_e2ee/diagnostics.py
+<config>/custom_components/matrix_e2ee/nio_compat.py
 <config>/custom_components/matrix_e2ee/storage.py
+<config>/custom_components/matrix_e2ee/url.py
 <config>/custom_components/matrix_e2ee/services.yaml
 <config>/custom_components/matrix_e2ee/strings.json
 <config>/custom_components/matrix_e2ee/translations/en.json
 <config>/custom_components/matrix_e2ee/translations/zh-Hans.json
+<config>/custom_components/matrix_e2ee/brand/icon.png
+<config>/custom_components/matrix_e2ee/brand/icon@2x.png
+<config>/custom_components/matrix_e2ee/brand/logo.png
+<config>/custom_components/matrix_e2ee/brand/logo@2x.png
 ```
 
 ### 2. Add the integration in the UI
@@ -60,6 +68,8 @@ The installed tree must be:
 4. On first login the integration creates the bot device and writes its crypto store. Later restarts restore the same device without any password.
 
 The password is required only on the very first login, when no session file exists yet. It is not saved to the config entry.
+
+**One bot per Home Assistant.** This integration supports a single config entry (`"single_config_entry": true`). The session file and crypto store are global to the integration, so a second entry would silently rebind them to a different account. Adding the integration a second time — even with a different username — is rejected with "Already configured".
 
 ### 3. Migrating from the old YAML setup
 
@@ -93,7 +103,7 @@ Rules that this project will not violate:
 - Never use Synapse admin login tokens for E2EE
 - Never set `ignore_unverified_devices=True` by default
 - Never auto-trust unknown devices
-- Never fall back to plaintext
+- Never fall back to plaintext when an encrypted send fails (unverified/unknown devices block the send; it is never downgraded to plaintext). Unencrypted rooms on the allowlist are still sent unencrypted.
 - Never process commands from unverified devices
 - Never log access tokens, pickle keys, message bodies, or crypto-store secrets
 - Crypto store loss is a **new device**. Old history is not recoverable
@@ -105,7 +115,7 @@ Device verification has been manually confirmed on a real deployment (Element SA
 
 All configuration is done through the Config Flow:
 
-- **homeserver** and **username** are entered when the integration is added. The username is read-only afterwards; the homeserver can be changed via **Reconfigure**.
+- **homeserver** and **username** are entered when the integration is added. The username is read-only afterwards; the homeserver can be changed via **Reconfigure**. Changing to a **different server origin** (scheme, host, or port) quarantines the old session file and crypto store and logs in as a fresh device — the old token is never sent to the new origin, and you must re-enter the bot password and re-run device verification. Changing only the trailing slash or path keeps the same device.
 - **allowed_rooms**, **allowed_users**, **verification_peer_users**, and **command_prefix** are edited via **Configure** (Options). Changing them reloads the integration and reuses the existing crypto store.
 
 Empty `allowed_rooms`: no send, no inbound commands. Empty `allowed_users`: no inbound commands; send to allowed rooms is still permitted. Empty `verification_peer_users`: no inbound SAS (only the bot's own account may initiate it).
@@ -156,7 +166,7 @@ SAS interoperability with Element relies on four runtime patches to `matrix-nio`
 
 Session JSON and the crypto store stay on the Home Assistant host. They are gitignored. This is a public repository: never commit tokens, pickle keys, passwords, or store files.
 
-Safe diagnostics (no token, pickle key, password, or message body) are the fields below. There is no Config Entry diagnostics platform in v0.3.
+Safe diagnostics (no token, pickle key, password, or message body) are exposed through the Config Entry diagnostics platform — **Settings → Devices & Services → Matrix E2EE → ⋮ → Download diagnostics**:
 
 - `user_id`
 - `device_id`
@@ -165,6 +175,8 @@ Safe diagnostics (no token, pickle key, password, or message body) are the field
 - `soft_logged_out`
 - `encryption_enabled` (always true for this integration)
 - `store_sync_tokens` (always true for this integration)
+- `known_device_count` (devices in the bot's device store)
+- `verified_peer_count` (devices this bot marked verified)
 
 ### Soft logout (`matrix_e2ee_error` code `soft_logout`)
 
@@ -211,7 +223,8 @@ This integration does not rotate refresh tokens. If login or `reauthenticate` wo
 | **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Released ([#5](https://github.com/windyboy/ha-matrix-e2ee/pull/5)) |
 | **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Released ([#6](https://github.com/windyboy/ha-matrix-e2ee/pull/6)) |
 | **M5** | Config Flow migration: UI setup, options / reconfigure / reauth flows, YAML import, tests | Released (v0.2.0) |
-| **v0.3** | Options Flow device-verification wizard (bot- and peer-initiated) with live SAS emoji UI, `m.key.verification.done` handshake | Released (v0.3.4) |
+| **v0.3** | Options Flow device-verification wizard (bot- and peer-initiated) with live SAS emoji UI, `m.key.verification.done` handshake | Released (v0.3.8) |
+| **v0.3.x** | UI polish + maintenance: single-config-entry enforcement, homeserver URL normalization (HTTPS-only, credential rejection), origin-change reconfigure isolation, verified-peer diagnostics, numbered SAS emoji compare, brand assets, `nio_compat.py` extraction with version guard, CI quality gates (ruff + coverage + audit), docs alignment | In progress ([W1N-190](https://linear.app/w1ndy/issue/W1N-190)) |
 
 M1 acceptance uses unencrypted test rooms. The first successful login still creates a full E2EE-capable Matrix device so M2 does not “upgrade” a non-crypto device.
 

@@ -35,6 +35,7 @@ from .const import (
     SERVICE_START_VERIFICATION,
     SERVICE_VERIFY_DEVICE_BY_FINGERPRINT,
 )
+from .url import HomeserverURLInvalid, normalize_homeserver
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,11 +78,19 @@ except ImportError:  # pragma: no cover - unit tests without Home Assistant
         """Home Assistant is required for entry unload."""
         raise RuntimeError("Home Assistant is required to set up matrix_e2ee")
 else:
+
+    def _validate_homeserver(value: str) -> str:
+        """Normalize a YAML homeserver URL, raising vol.Invalid on bad input."""
+        try:
+            return normalize_homeserver(value)
+        except HomeserverURLInvalid as err:
+            raise vol.Invalid(f"invalid homeserver URL: {err.reason}") from err
+
     CONFIG_SCHEMA = vol.Schema(
         {
             DOMAIN: vol.Schema(
                 {
-                    vol.Required(CONF_HOMESERVER): cv.string,
+                    vol.Required(CONF_HOMESERVER): _validate_homeserver,
                     vol.Required(CONF_USERNAME): cv.string,
                     vol.Optional(CONF_PASSWORD): cv.string,
                     vol.Optional(CONF_ALLOWED_ROOMS, default=list): vol.All(

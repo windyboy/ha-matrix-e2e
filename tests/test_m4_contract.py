@@ -97,8 +97,8 @@ async def test_soft_logout_keeps_store_and_same_device(tmp_path):
     assert nio.store_path == store
     assert nio.closed is False
     assert client.session.device_id == session.device_id
-    assert (ERROR_SOFT_LOGOUT,) == tuple(
-        data["code"] for event, data in events if event == EVENT_ERROR
+    assert tuple(data["code"] for event, data in events if event == EVENT_ERROR) == (
+        ERROR_SOFT_LOGOUT,
     )
     diag = client.safe_diagnostics()
     assert diag["soft_logged_out"] is True

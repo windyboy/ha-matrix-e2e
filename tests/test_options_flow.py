@@ -6,8 +6,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.matrix_e2ee import client as client_module
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
@@ -20,7 +20,6 @@ from custom_components.matrix_e2ee.const import (
     CONF_VERIFICATION_PEER_USERS,
     DOMAIN,
 )
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from tests.fakes import FakeNio, FakeSas
 
 HS = "https://matrix.example.org"
