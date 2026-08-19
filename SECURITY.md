@@ -21,30 +21,32 @@ Reconfigure lets you change the homeserver URL. The integration compares the **o
 
 ## Device verification (two paths)
 
-Device verification moved into the integration's Options Flow in v0.3: Settings → Devices & Services → Matrix E2EE → Configure → Verify device (a live SAS emoji wizard). The `start_verification` / `confirm_verification` / `cancel_verification` services remain available for automation, and the `matrix_e2ee_verification` event still reports every stage.
+Use **Settings → Devices & Services → Matrix E2EE → Configure → Verify device** for the live SAS emoji wizard. The wizard waits for Element to initiate verification; it does not start a transaction itself. The `start_verification` / `confirm_verification` / `cancel_verification` services remain available for advanced use, and `matrix_e2ee_verification` reports every stage.
 
 ### 1. SAS (mutual, manual confirmation)
 
 1. Log in to the bot account in Element. This device becomes the admin/bootstrap device.
 2. Bootstrap the bot's cross-signing identity in Element.
-3. Start the server bot; it creates its device (`BOT_SERVER_01` is an example identifier — the actual device display name is `Home Assistant matrix_e2ee`, `const.py` `DEVICE_NAME`, with a server-generated random device ID) and uploads device keys.
-4. In Element, open the bot account's Sessions and verify `BOT_SERVER_01`.
-5. Compare the SAS emojis on both sides, then confirm from Home Assistant — either via the Options Flow → Verify device wizard (v0.3, bot-initiated) or the `matrix_e2ee.confirm_verification` service. Only this explicit step marks the device verified.
-6. Element cross-signs `BOT_SERVER_01`, which then shows as verified.
+3. Start the integration; it creates a device with display name `Home Assistant matrix_e2ee` and a server-generated device ID.
+4. Open the wizard in Home Assistant, then verify that device from Element's Sessions page.
+5. Compare every SAS emoji and confirm from Home Assistant only when both sides match.
+6. After the MAC exchange completes, Element shows the device as verified.
 
-There is no auto-confirm. A second device of the bot's own account is not trusted just because it shares the account; it must go through the same manual emoji comparison and explicit `confirm_verification`. Only the bot's own account or users in `verification_peer_users` may initiate SAS. Everything else is rejected with error code `verification_peer_denied`.
+There is no auto-confirm. A second device of the bot's own account is not trusted just because it shares the account; it must go through the same manual emoji comparison and explicit `confirm_verification`. Only the bot's own account or users in `verification_peer_users` may initiate SAS. Unauthorized framework requests are ignored; unauthorized SAS events emit `verification_peer_denied`.
 
 ### 2. One-sided fingerprint (fallback)
 
-1. Call `matrix_e2ee.get_fingerprint` (or read the `matrix_e2ee_fingerprint` event) to get the bot's `ed25519` device key.
+1. Listen for `matrix_e2ee_fingerprint`, then call `matrix_e2ee.get_fingerprint` and read the bot's `ed25519` device key from the event.
 2. In Element, open the bot user's sessions and use "Manually verify by text".
 3. Compare the session key with the fingerprint. This trusts the bot from Element's side only.
 
-To trust a device from the bot's side without SAS, call `matrix_e2ee.verify_device_by_fingerprint` with the device's `ed25519` key. It is trusted only when the fingerprint matches exactly (error `fingerprint_mismatch` otherwise). This is local trust, not SAS or cross-signing.
+To trust a device from the bot's side without SAS, call `matrix_e2ee.verify_device_by_fingerprint` with the device's `ed25519` key. It is trusted only when the fingerprint matches exactly; otherwise `matrix_e2ee_error` emits `fingerprint_mismatch`. This is local trust, not SAS or cross-signing.
 
 ## Why not cross-signing self-sign?
 
 matrix-nio 0.26 does not implement cross-signing key bootstrap or self-signing. Self-signing would also put the bot's cross-signing authority on the host, which this integration intentionally avoids.
+
+For operational steps, see [Device verification](docs/DEVICE_VERIFICATION.md). For implementation boundaries, see [SAS architecture](docs/SAS_ARCHITECTURE.md).
 
 ## Leaked keys or stolen host
 

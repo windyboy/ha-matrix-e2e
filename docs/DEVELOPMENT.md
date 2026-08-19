@@ -1,76 +1,93 @@
 # Development notes
 
+> Audience: contributors developing, testing, and releasing `matrix_e2ee`.
+>
 > Language: [English](DEVELOPMENT.md) | [中文](DEVELOPMENT.zh.md)
 
-This repository is a Home Assistant custom integration (`custom_components/matrix_e2ee`). It does **not** override the built-in `matrix` domain.
+This repository provides the Home Assistant custom integration `custom_components/matrix_e2ee`. It does not override Home Assistant's built-in `matrix` domain.
 
-## Supported versions
+## Environment and dependencies
 
-| Component | Version |
-| --- | --- |
+| Component | Current constraint |
+|---|---|
 | Python | 3.14 |
-| Home Assistant | 2026.8.x (test harness `2026.8.2`) |
-| matrix-nio | `0.26.0` (pinned; `matrix-nio[e2e]==0.26.0`) |
-| vodozemac | `>=0.9.0.post2` |
-| peewee | `~=3.14` |
-| cachetools | `>=5.3` |
-| atomicwrites | `~=1.4` |
+| Home Assistant test harness | `2026.8.2` |
+| matrix-nio | `matrix-nio[e2e]==0.26.0` |
 
-The runtime dependency pins live in `custom_components/matrix_e2ee/manifest.json`; the dev/test pins live in `requirements-dev.txt`. CI runs on Python 3.14 (GitHub Actions `ubuntu-latest`). Do not bump `matrix-nio` without following the upgrade checklist in [NIO_COMPAT.md](NIO_COMPAT.md).
+`custom_components/matrix_e2ee/manifest.json` is the source of truth for runtime dependencies. `requirements-dev.txt` is the source of truth for development and test dependencies. Do not maintain another complete dependency copy in documentation.
 
-## Tests
+The project uses `uv` and the `.venv` at the repository root. Run every Python command through `uv run`:
 
-- Use **pytest** with a mocked `nio.AsyncClient` and a temporary Home Assistant config/storage directory.
-- Config Flow / Options Flow / reauth / entry lifecycle tests use the Home Assistant test harness (`pytest-homeassistant-custom-component` + `homeassistant`).
-- Do **not** use a real Matrix homeserver, access token, pickle key, crypto store, or SAS transcript in tests or in git.
+```bash
+uv run python --version
+uv run python -m pytest
+```
 
-From the repository root:
+The first command must report Python 3.14.x. Before upgrading matrix-nio, complete the checklist in [NIO_COMPAT.md](NIO_COMPAT.md).
+
+## Test structure
+
+Tests do not connect to a real Matrix homeserver. They inject a simulated `nio.AsyncClient` through the module-level `_NIO_CLIENT_FACTORY` and use temporary Home Assistant configuration and storage directories.
+
+| Category | Files |
+|---|---|
+| M1–M4 contracts | `tests/test_m1_contract.py` through `tests/test_m4_contract.py` |
+| Config, Options, Reauth, Import | `tests/test_config_flow.py`, `tests/test_options_flow.py`, `tests/test_reauth.py`, `tests/test_import.py` |
+| Config Entry lifecycle | `tests/test_entry_lifecycle.py`, `tests/test_manifest.py` |
+| matrix-nio compatibility | `tests/test_nio_compat.py` |
+| Shared test doubles | `tests/fakes.py` |
+
+Run the complete suite:
 
 ```bash
 uv run python -m pytest
 ```
 
-`uv` manages the project's `.venv` (deps in `requirements-dev.txt`) and selects the `.venv` interpreter automatically.
+`FakeNio` cannot expose protocol-encoding differences between real clients. Changes to SAS, commitments, emoji, or MAC handling also require a manual end-to-end check with Element on a real homeserver; [SAS architecture](SAS_ARCHITECTURE.md) records this test boundary.
 
-These tests mock `nio.AsyncClient`; the flow/lifecycle tests use the Home Assistant test harness with a mocked nio client injected via the module-level `_NIO_CLIENT_FACTORY`. Do not invent a workaround or install packages into Home Assistant OS.
+## CI quality checks
 
-M1 contract: `tests/test_m1_contract.py`. M2 contract: `tests/test_m2_contract.py`. M3 contract: `tests/test_m3_contract.py`. M4 contract: `tests/test_m4_contract.py`. Config Flow: `tests/test_config_flow.py`, `tests/test_reauth.py`, `tests/test_options_flow.py`, `tests/test_import.py`, `tests/test_entry_lifecycle.py`, `tests/test_manifest.py`. SAS patches: `tests/test_nio_compat.py`. Shared fake client: `tests/fakes.py`.
+`.github/workflows/tests.yml` runs on every push and pull request:
 
-## CI quality gates
+- `lint`: `ruff check` and `ruff format --check`.
+- `pytest`: the test suite with a minimum of 81% coverage.
+- `audit`: extracts runtime dependencies from `manifest.json` and runs `pip-audit`.
 
-`.github/workflows/tests.yml` runs three jobs on every push and pull request:
-
-- **lint** — `ruff check` and `ruff format --check` (config in `ruff.toml`).
-- **pytest** — `pytest --cov=custom_components.matrix_e2ee --cov-fail-under=81` (the coverage floor tracks the measured baseline).
-- **audit** — `pip-audit` against the runtime requirements extracted from `manifest.json`.
-
-Run the same checks locally before pushing:
+Run the equivalent checks before pushing:
 
 ```bash
 uv run python -m ruff check custom_components/ tests/
 uv run python -m ruff format --check custom_components/ tests/
 uv run python -m pytest --cov=custom_components.matrix_e2ee --cov-fail-under=81
-uv run python -m pip_audit --requirement <(uv run python -c "import json; print('\n'.join(json.load(open('custom_components/matrix_e2ee/manifest.json'))['requirements']))")
+uv run python -c "import json; print('\n'.join(json.load(open('custom_components/matrix_e2ee/manifest.json'))['requirements']))" > runtime-requirements.txt
+uv run python -m pip_audit --requirement runtime-requirements.txt
+rm runtime-requirements.txt
 ```
 
-## nio compatibility
+The coverage threshold is the current project quality baseline. Lowering it requires a documented reason; do not reduce it only to make CI pass.
 
-The integration applies four runtime patches to `matrix-nio` 0.26.0 `Sas` for
-Element SAS interoperability. See [NIO_COMPAT.md](NIO_COMPAT.md) for the patch
-matrix and the upgrade checklist before bumping `matrix-nio`.
+## Local installation
 
-## Local layout
+Copy `custom_components/matrix_e2ee` to `custom_components/matrix_e2ee` under the Home Assistant configuration directory, then configure it through **Settings → Devices & Services → Add Integration → Matrix E2EE**.
 
-Copy `custom_components/matrix_e2ee` into `<config>/custom_components/matrix_e2ee` on a Home Assistant instance. Configure via the Config Flow UI (**Settings → Devices & Services → Add Integration → Matrix E2EE**). A leftover `matrix_e2ee:` YAML block is imported into a config entry on startup.
+A legacy `matrix_e2ee:` YAML block is imported into a Config Entry at startup. Session and crypto-store data live under `<config>/.storage/` and must persist with the Home Assistant configuration directory.
 
-Session and crypto store are written under `<config>/.storage/` at runtime. Those paths are gitignored and must stay on the same persistent volume as Home Assistant.
+Do not install development dependencies into Home Assistant OS's system Python. Local development and tests use only the project virtual environment.
 
-## Secrets
+## Sensitive information
 
-Never log or commit:
+Tests, logs, and Git history must not contain:
 
-- access tokens
+- Matrix access tokens or account passwords
 - pickle keys
 - message bodies
 - crypto-store contents
-- homeserver passwords or test credentials
+- real SAS transcripts or test credentials
+
+Device public keys may be used for diagnostics, but avoid recording unrelated account or device information.
+
+## Related documentation
+
+- [SAS architecture](SAS_ARCHITECTURE.md)
+- [matrix-nio compatibility](NIO_COMPAT.md)
+- [Security model](../SECURITY.md)

@@ -1,103 +1,79 @@
-# matrix-nio 0.26.0 compatibility patches
+# matrix-nio 0.26.0 compatibility
 
+> Audience: developers maintaining the SAS compatibility layer or upgrading matrix-nio.
+>
 > Language: [English](NIO_COMPAT.md) | [中文](NIO_COMPAT.zh.md)
 
-This integration pins `matrix-nio[e2e]==0.26.0` (see `manifest.json`) and applies
-four runtime patches to `nio.crypto.sas.Sas` before every client is created.
-The patches live in `custom_components/matrix_e2ee/nio_compat.py` and are applied
-via `apply_nio_compat_patches()`, which `client.py` calls from `_make_nio()`.
-Each patch fixes a nio 0.26.0 bug that breaks SAS interoperability with
-Element / matrix-rust-sdk.
+The integration pins `matrix-nio[e2e]` to `0.26.0` and applies four runtime compatibility fixes to `nio.crypto.sas.Sas` before creating a client. They live in `custom_components/matrix_e2ee/nio_compat.py`; `_make_nio()` enables them through `apply_nio_compat_patches()`.
 
-`apply_nio_compat_patches()` also emits a warning when the installed
-`matrix-nio` release drifts from the `0.26.0` pin, since the patches are only
-known to be correct for that release.
+The fixes have been validated only against 0.26.0. The integration logs a warning if another version is installed. Each fix is idempotent and skips execution when nio is absent so unit tests can run with `FakeNio`.
 
-Every patch is:
+## Summary
 
-- **Idempotent** — guarded by a `_matrix_e2ee_*_patched` flag on the class.
-- **No-op when nio is absent** — each `_patch_nio_sas_*()` wrapper wraps the
-  `from nio … import …` in `try/except` so the unit tests (which use `FakeNio`)
-  run without nio installed.
+| Fix | Defect in 0.26.0 | User-visible result |
+|---|---|---|
+| SAS timeout | `_last_event_time` never refreshes, so the transaction always expires after 60 seconds | Verification is canceled during emoji comparison |
+| Commitment | Uses a hexadecimal digest instead of the required unpadded Base64 | Element cancels with `m.key_mismatch` when it checks the commitment after key exchange |
+| Emoji indices | Re-applies old bit slicing to final vodozemac indices | The two clients display different emoji |
+| Legacy MAC | Negotiates v1 but uses the v2 Base64 wire encoding | Element rejects the MAC with `m.key_mismatch` |
 
-## Patch matrix
+## 1. SAS timeout
 
-| Patch | nio 0.26.0 bug | Symptom if removed | Ref |
-|---|---|---|---|
-| SAS timeout | `Sas._last_event_time` is assigned once in `__init__` and never refreshed, so `timed_out` is `True` 60 s after creation regardless of activity | SAS dies mid-emoji-comparison | W1N-172, PR #23 |
-| SAS commitment | `hashlib.sha256(...).hexdigest()` instead of the spec's unpadded base64 | Element rejects `accept` with `m.key_mismatch` | PR #28, v0.2.8 |
-| SAS emoji | re-slices vodozemac's final indices with the old libolm bit-slicing | emoji disagree → `m.mismatched_sas` | W1N-175, PR #29 |
-| Legacy MAC | negotiates `hkdf-hmac-sha256` (v1) but computes/verifies with `.v2` valid base64 | Element rejects `mac` with `m.key_mismatch` | W1N-177, PR #30 |
+Entry point: `_apply_sas_timeout_patch()`.
 
-## Patch details
+matrix-nio 0.26.0 sets `_last_event_time` only when `Sas` is created. It never updates the value, so `timed_out` becomes `True` after 60 seconds even while messages are still being exchanged.
 
-### 1. SAS timeout — `_apply_sas_timeout_patch` (`nio_compat.py`)
+The replacement `timed_out` uses only `creation_time + _max_age` (5 minutes). The integration separately checks its shorter 240-second verification deadline during confirmation and inbound-event handling.
 
-nio 0.26.0 assigns `Sas._last_event_time` once in `__init__` and never updates
-it, so `timed_out` flips `True` exactly 60 s after creation no matter how
-recent the activity. A human comparing emoji typically needs more than 60 s.
+Before removing this fix, confirm that the new nio version refreshes activity time or has another correct timeout model.
 
-The patch replaces the `timed_out` property with one keyed on
-`creation_time + _max_age` (5 min). The integration's own 240 s timeout
-(`VERIFICATION_TIMEOUT_SECONDS`) still fires first.
+## 2. SAS commitment
 
-**If removed or nio is upgraded**: SAS will time out mid-comparison. On upgrade,
-verify whether nio now refreshes `_last_event_time`; if so, drop this patch.
+Entry point: `_apply_sas_commitment_patch()`.
 
-### 2. SAS commitment — `_apply_sas_commitment_patch` (`nio_compat.py`)
+Matrix defines the commitment in `m.key.verification.accept` as:
 
-The Matrix spec requires the SAS commitment in `m.key.verification.accept` to be
-the unpadded base64 of `SHA-256(pubkey || canonical_json)`. nio 0.26.0 switched
-from `olm.sha256` (unpadded base64) to `hashlib.sha256(...).hexdigest()` in both
-`from_key_verification_start` (responder) and `_check_commitment` (initiator).
-The two changed together, so nio↔nio still agrees while Element (base64) cancels
-with `m.key_mismatch`.
+```text
+Base64_without_padding(SHA-256(public_key || canonical_start_content))
+```
 
-The patch restores unpadded base64 (`_sas_commitment`) in both directions.
+matrix-nio 0.26.0 changed both generation and verification to `hexdigest()`. Two nio clients therefore agree with each other, but Element follows the specified Base64 representation and rejects the transaction.
 
-**If removed or nio is upgraded**: Element rejects the SAS `accept`. On upgrade,
-check whether nio emits base64 commitments again.
+The fix replaces both `from_key_verification_start()` and `_check_commitment()` to restore unpadded Base64. Check both directions when upgrading.
 
-### 3. SAS emoji — `_apply_sas_emoji_patch` (`nio_compat.py`)
+## 3. SAS emoji
 
-vodozemac's `EstablishedSas.bytes(info).emoji_indices` already returns the 7
-final emoji indices (`[u8; 7]`, values 0–63). nio 0.26.0 still runs the old
-libolm bit-slicing over them, treating the indices as raw bytes, so the rendered
-emoji disagree with Element (`m.mismatched_sas`).
+Entry point: `_apply_sas_emoji_patch()`.
 
-The patch returns the indices directly.
+`EstablishedSas.bytes(info).emoji_indices` already returns seven final indices in the range 0–63. matrix-nio 0.26.0 applies the old libolm bit slicing again, producing a different display from Element.
 
-**If removed or nio is upgraded**: emoji mismatch. On upgrade, check whether nio
-consumes `emoji_indices` directly.
+The replacement `_generate_emoji()` maps those indices directly to the emoji table. Before removing it, confirm that the new nio version consumes `emoji_indices` directly.
 
-### 4. Legacy MAC — `_apply_sas_mac_patch` (`nio_compat.py`)
+## 4. Legacy MAC
 
-nio 0.26.0 negotiates only `hkdf-hmac-sha256` (v1, no `.v2`), but computes and
-verifies the MAC with the standard `calculate_mac` (the `.v2` wire format).
-The v1 wire format is libolm's invalid-base64 output, so Element cancels with
-`m.key_mismatch`.
+Entry point: `_apply_sas_mac_patch()`.
 
-The patch routes the legacy method to `calculate_mac_invalid_base64` in both
-`get_mac` and `receive_mac_event` so generation and verification agree.
+matrix-nio 0.26.0 negotiates only `hkdf-hmac-sha256` (v1) but calls `calculate_mac()`, which produces the standard Base64 representation used by v2. The v1 wire format requires compatibility with libolm's non-standard Base64.
 
-This patch also fixes a latent nio bug: `receive_mac_event`'s "no verified
-devices" branch set `state = canceled` but then unconditionally overwrote it
-with `mac_received` (missing `return`). The patched `receive_mac_event` returns
-after that branch (W1N-179, PR #31). nio 0.26.0 upstream still has this bug.
+The replacement `get_mac()` and `receive_mac_event()` both select `calculate_mac_invalid_base64()` for the legacy method. Generation and verification must change together.
 
-**If removed or nio is upgraded**: legacy-MAC mismatch, and the missing-`return`
-bug reappears. On upgrade, check whether nio provides `.v2` MAC and whether the
-`receive_mac_event` missing-`return` was fixed upstream.
+This fix also corrects a state error in `receive_mac_event()`: when no device passes MAC verification, the function must return after setting `canceled`; otherwise nio overwrites the state with `mac_received`.
 
 ## Upgrade checklist
 
-When bumping `matrix-nio` off `0.26.0`, before removing any patch confirm:
+Before upgrading `matrix-nio`:
 
-1. `Sas._last_event_time` is refreshed (or the timeout model changed).
-2. The commitment is unpadded base64 (not hexdigest).
-3. `_generate_emoji` consumes vodozemac `emoji_indices` directly.
-4. Legacy `hkdf-hmac-sha256` uses `calculate_mac_invalid_base64`, and
-   `receive_mac_event` no longer has the missing-`return` bug.
+1. Update `manifest.json` and development dependencies in an isolated branch.
+2. Check that the new nio version maintains SAS activity time correctly.
+3. Confirm that commitments use unpadded Base64, not `hexdigest()`.
+4. Confirm that `_generate_emoji()` consumes vodozemac's final indices directly.
+5. Inspect v1 and `.v2` MAC negotiation and encoding, and confirm that `receive_mac_event()` preserves cancellation.
+6. Remove only fixes that upstream now implements correctly; do not remove the entire compatibility layer at once.
+7. Run `tests/test_nio_compat.py` and the complete test suite.
+8. Complete an end-to-end SAS verification with Element on a real Matrix homeserver.
+9. Update the validated version range in this document.
 
-If any is still broken, keep that patch and update the "known to work with"
-note in this file.
+## Related documentation
+
+- [SAS architecture](SAS_ARCHITECTURE.md)
+- [Development notes](DEVELOPMENT.md)

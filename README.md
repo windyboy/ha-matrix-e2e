@@ -7,6 +7,14 @@ Home Assistant **custom** integration that runs a dedicated Matrix bot with a pe
 - Python, `matrix-nio[e2e]==0.26.0` with its E2EE extras (`vodozemac`, `peewee`, `cachetools`, `atomicwrites`) declared explicitly in `manifest.json`
 - Config Flow (UI) setup; not in HACS
 
+## Documentation
+
+- [Device verification](docs/DEVICE_VERIFICATION.md) ([中文](docs/DEVICE_VERIFICATION.zh.md)): administrator walkthrough for SAS and fingerprint verification.
+- [Development notes](docs/DEVELOPMENT.md) ([中文](docs/DEVELOPMENT.zh.md)): environment, tests, CI, and local installation.
+- [SAS architecture](docs/SAS_ARCHITECTURE.md) ([中文](docs/SAS_ARCHITECTURE.zh.md)): trust rules, message flow, and component responsibilities.
+- [matrix-nio compatibility](docs/NIO_COMPAT.md) ([中文](docs/NIO_COMPAT.zh.md)): runtime fixes and the upgrade checklist.
+- [Security model](SECURITY.md): trust boundaries, storage protection, and compromise response.
+
 ## Installation
 
 This is a **manual** custom integration (not in HACS). It is configured through Home Assistant's Config Flow (UI), not YAML.
@@ -135,7 +143,7 @@ The old YAML block is no longer required. If a `matrix_e2ee:` block remains in `
 
 `start_verification`, `confirm_verification`, `cancel_verification`, `verify_device_by_fingerprint`, and `reauthenticate` are admin-only and enforced by Home Assistant's admin-service helper; non-admin users cannot call them.
 
-SAS emoji comparison happens in Developer Tools via `matrix_e2ee_verification` (`stage: sas`). Confirming is the only step that marks a device verified. Accepting an inbound SAS start is protocol continuation, not trust.
+SAS emoji comparison is available in the Options Flow wizard or, for advanced use, through the `matrix_e2ee_verification` event (`stage: sas`) in Developer Tools. Confirming is the only step that marks a device verified. Accepting an inbound SAS start is protocol continuation, not trust.
 
 Commands fire Home Assistant events only. This integration never calls `domain.service` itself. Map commands in automations.
 
@@ -143,24 +151,9 @@ Commands fire Home Assistant events only. This integration never calls `domain.s
 
 ## Device verification
 
-Device verification has an in-UI wizard (v0.3+): **Settings → Devices & Services → Matrix E2EE → Configure → Verify device**. Two paths are supported; see [SECURITY.md](SECURITY.md) for the trust model and [docs/DEVICE_VERIFICATION.md](docs/DEVICE_VERIFICATION.md) ([中文](docs/DEVICE_VERIFICATION.zh.md)) for a step-by-step walkthrough.
+Use **Settings → Devices & Services → Matrix E2EE → Configure → Verify device** and initiate verification for `Home Assistant matrix_e2ee` from Element. Compare every emoji and confirm only when both sides match. Devices are never trusted automatically, even when they belong to the same account.
 
-### 1. SAS (mutual, manual confirmation)
-
-1. Log in to the bot account in Element (this becomes the bootstrap/admin device) and bootstrap its cross-signing identity.
-2. Start the server bot — it creates its device and uploads device keys.
-3. In Element, open the bot account's Sessions and verify the server bot device.
-4. Compare the SAS emojis on both sides, then confirm from Home Assistant — either via the Options Flow → Verify device wizard (v0.3, recommended) or the `matrix_e2ee.confirm_verification` service. Only this explicit step marks the device verified.
-
-Every device — including another device of the bot's own account — requires this manual emoji comparison and explicit confirmation (wizard or `confirm_verification`). There is no auto-confirm. Only the bot's own account or users in `verification_peer_users` may initiate SAS (`verification_peer_denied` otherwise).
-
-### 2. One-sided fingerprint (fallback)
-
-1. Call `matrix_e2ee.get_fingerprint` (or read `matrix_e2ee_fingerprint`) for the bot's `ed25519` device key.
-2. In Element, open the bot user's sessions and use "Manually verify by text".
-3. Compare the session key with the fingerprint. This trusts the bot from Element's side only; to trust a device from the bot's side, call `matrix_e2ee.verify_device_by_fingerprint` with the device's `ed25519` key. It is trusted only on an exact match.
-
-SAS interoperability with Element relies on four runtime patches to `matrix-nio` 0.26.0; see [docs/NIO_COMPAT.md](docs/NIO_COMPAT.md) ([中文](docs/NIO_COMPAT.zh.md)).
+See [Device verification](docs/DEVICE_VERIFICATION.md) ([中文](docs/DEVICE_VERIFICATION.zh.md)) for the complete walkthrough, [Security](SECURITY.md) for the trust model, and [SAS architecture](docs/SAS_ARCHITECTURE.md) for implementation details.
 
 ## Recovery runbook
 
@@ -223,7 +216,7 @@ This integration does not rotate refresh tokens. If login or `reauthenticate` wo
 | **M3** | SAS services/events (`start_verification`, `confirm_verification`, `cancel_verification`) so encrypted send/commands can succeed with verified devices | Released ([#5](https://github.com/windyboy/ha-matrix-e2ee/pull/5)) |
 | **M4** | Soft logout / `reauthenticate`, store-loss runbook, diagnostics | Released ([#6](https://github.com/windyboy/ha-matrix-e2ee/pull/6)) |
 | **M5** | Config Flow migration: UI setup, options / reconfigure / reauth flows, YAML import, tests | Released (v0.2.0) |
-| **v0.3** | Options Flow device-verification wizard (bot- and peer-initiated) with live SAS emoji UI, `m.key.verification.done` handshake | Released (v0.3.8) |
+| **v0.3** | Options Flow device-verification wizard for Element-initiated SAS with live emoji comparison, `m.key.verification.done` handshake | Released (v0.3.8) |
 | **v0.3.x** | UI polish + maintenance: single-config-entry enforcement, homeserver URL normalization (HTTPS-only, credential rejection), origin-change reconfigure isolation, verified-peer diagnostics, numbered SAS emoji compare, brand assets, `nio_compat.py` extraction with version guard, CI quality gates (ruff + coverage + audit), docs alignment | In progress ([W1N-190](https://linear.app/w1ndy/issue/W1N-190)) |
 
 M1 acceptance uses unencrypted test rooms. The first successful login still creates a full E2EE-capable Matrix device so M2 does not “upgrade” a non-crypto device.
