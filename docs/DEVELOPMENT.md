@@ -34,8 +34,9 @@ Tests do not connect to a real Matrix homeserver. They inject a simulated `nio.A
 | M1–M4 contracts | `tests/test_m1_contract.py` through `tests/test_m4_contract.py` |
 | Config, Options, Reauth, Import | `tests/test_config_flow.py`, `tests/test_options_flow.py`, `tests/test_reauth.py`, `tests/test_import.py` |
 | Config Entry lifecycle | `tests/test_entry_lifecycle.py`, `tests/test_manifest.py` |
+| Diagnostics, URL, brand, connection sensor | `tests/test_diagnostics.py`, `tests/test_url.py`, `tests/test_brand.py`, `tests/test_binary_sensor.py` |
 | matrix-nio compatibility | `tests/test_nio_compat.py` |
-| Shared test doubles | `tests/fakes.py` |
+| Shared fixtures / doubles | `tests/conftest.py`, `tests/fakes.py` |
 
 Run the complete suite:
 

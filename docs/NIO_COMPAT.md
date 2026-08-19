@@ -71,7 +71,7 @@ Before upgrading `matrix-nio`:
 6. Remove only fixes that upstream now implements correctly; do not remove the entire compatibility layer at once.
 7. Run `tests/test_nio_compat.py` and the complete test suite.
 8. Complete an end-to-end SAS verification with Element on a real Matrix homeserver.
-9. Update the validated version range in this document.
+9. Update the validated version in **three places together**: this document, `NIO_COMPAT_VERSION` in `nio_compat.py`, and the `matrix-nio[e2e]==…` pin in `manifest.json`.
 
 ## Related documentation
 
