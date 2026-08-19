@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.11] - 2026-08-19
+
+### Fixed
+
+- Restore `ruff format --check` compliance in `client.py` (drop redundant parentheses around comma-separated `except` clauses).
+
+### Documentation
+
+- Expand README with v0.3.10 alignment: TOC, error-code table, Connection diagnostics, URL normalization rules, automation examples.
+- Add DEVICE_VERIFICATION troubleshooting for `session_corrupt` / `restore_failed`.
+- Add `SECURITY.zh.md` and sync EN/ZH security and migration notes.
+- Complete DEVELOPMENT test inventory and NIO upgrade checklist.
+- Polish migration wording and changelog dates.
+
 ## [0.3.10] - 2026-08-19
 
 ### Documentation
@@ -51,6 +65,7 @@ Incremental SAS wizard, peer-initiated verification, and related fixes. See git 
 - M3: SAS services and events.
 - M4: soft logout / `reauthenticate`, store-loss runbook, diagnostics foundation.
 
+[0.3.11]: https://github.com/windyboy/ha-matrix-e2ee/releases/tag/v0.3.11
 [0.3.10]: https://github.com/windyboy/ha-matrix-e2ee/releases/tag/v0.3.10
 [0.3.9]: https://github.com/windyboy/ha-matrix-e2ee/releases/tag/v0.3.9
 [0.3.8]: https://github.com/windyboy/ha-matrix-e2ee/releases/tag/v0.3.8
