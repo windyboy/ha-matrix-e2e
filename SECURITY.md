@@ -1,5 +1,7 @@
 # Security
 
+> Language: [English](SECURITY.md) | [中文](SECURITY.zh.md)
+
 `matrix_e2ee` runs a dedicated Matrix bot as a Home Assistant custom integration with end-to-end encryption. This document records the trust model and the two supported device-verification paths.
 
 ## Trust boundary
@@ -47,6 +49,17 @@ To trust a device from the bot's side without SAS, call `matrix_e2ee.verify_devi
 matrix-nio 0.26 does not implement cross-signing key bootstrap or self-signing. Self-signing would also put the bot's cross-signing authority on the host, which this integration intentionally avoids.
 
 For operational steps, see [Device verification](docs/DEVICE_VERIFICATION.md). For implementation boundaries, see [SAS architecture](docs/SAS_ARCHITECTURE.md).
+
+## Session and crypto store are a pair
+
+`.storage/matrix_e2ee_session.json` (`user_id`, `device_id`, `access_token`, `pickle_key`) and `.storage/matrix_e2ee_store/` (Olm/Megolm, device trust, sync token) must always be backed up and restored together. The session file alone cannot recover Megolm history; the store is useless without the matching `pickle_key`. A mismatched pair is a new device.
+
+## Migrating to a new Home Assistant host
+
+1. Stop Home Assistant on the old host (or disable this integration) so the bot is not connected from two places.
+2. Copy both the session file and the crypto store directory to the same paths on the new host.
+3. Install the same `matrix_e2ee` version and restart.
+4. The existing config entry should restore the same `device_id` and trust state. If either file is missing or the pair does not match, treat it as a new device and re-verify.
 
 ## Leaked keys or stolen host
 
