@@ -19,15 +19,25 @@
       },
       "reconfigure": {
         "title": "Reconfigure",
-        "description": "Change the homeserver URL. The username is read-only.",
+        "description": "Change the homeserver URL. The username is read-only. Changing to a different server logs the bot in as a new device.",
         "data": {
           "homeserver": "Homeserver URL"
+        }
+      },
+      "reconfigure_new_device": {
+        "title": "Reconfigure",
+        "description": "You changed the homeserver to a different server. The bot will log in fresh as a new device; the previous session and encryption keys are quarantined. Enter the bot account password.",
+        "data": {
+          "password": "Password"
         }
       }
     },
     "error": {
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "homeserver_invalid": "Enter a valid homeserver URL, e.g. https://matrix.example.org",
+      "homeserver_http_not_allowed": "HTTPS is required. Plain http is only allowed for localhost.",
+      "homeserver_credentials": "Do not include a username or password in the homeserver URL."
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured%]",
@@ -67,7 +77,7 @@
       },
       "compare": {
         "title": "Verify device",
-        "description": "Compare these emojis with the ones shown in your Matrix client. They must match exactly.\n\n{emojis}\n\nUser: {user_id}\nDevice: {device_id}",
+        "description": "Compare the numbered emojis with your Matrix client, then confirm whether they match.\n\n{emojis}\n\nUser: {user_id}\nDevice: {device_id}",
         "menu_options": {
           "match": "They match",
           "mismatch": "They do not match"

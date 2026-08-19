@@ -1,9 +1,15 @@
 # matrix-nio 0.26.0 compatibility patches
 
 This integration pins `matrix-nio[e2e]==0.26.0` (see `manifest.json`) and applies
-four runtime patches to `nio.crypto.sas.Sas` before every client is created
-(`custom_components/matrix_e2ee/client.py`, `_make_nio()`). Each patch fixes a
-nio 0.26.0 bug that breaks SAS interoperability with Element / matrix-rust-sdk.
+four runtime patches to `nio.crypto.sas.Sas` before every client is created.
+The patches live in `custom_components/matrix_e2ee/nio_compat.py` and are applied
+via `apply_nio_compat_patches()`, which `client.py` calls from `_make_nio()`.
+Each patch fixes a nio 0.26.0 bug that breaks SAS interoperability with
+Element / matrix-rust-sdk.
+
+`apply_nio_compat_patches()` also emits a warning when the installed
+`matrix-nio` release drifts from the `0.26.0` pin, since the patches are only
+known to be correct for that release.
 
 Every patch is:
 
@@ -23,7 +29,7 @@ Every patch is:
 
 ## Patch details
 
-### 1. SAS timeout — `_apply_sas_timeout_patch` (`client.py:167`)
+### 1. SAS timeout — `_apply_sas_timeout_patch` (`nio_compat.py`)
 
 nio 0.26.0 assigns `Sas._last_event_time` once in `__init__` and never updates
 it, so `timed_out` flips `True` exactly 60 s after creation no matter how
@@ -36,7 +42,7 @@ The patch replaces the `timed_out` property with one keyed on
 **If removed or nio is upgraded**: SAS will time out mid-comparison. On upgrade,
 verify whether nio now refreshes `_last_event_time`; if so, drop this patch.
 
-### 2. SAS commitment — `_apply_sas_commitment_patch` (`client.py:211`)
+### 2. SAS commitment — `_apply_sas_commitment_patch` (`nio_compat.py`)
 
 The Matrix spec requires the SAS commitment in `m.key.verification.accept` to be
 the unpadded base64 of `SHA-256(pubkey || canonical_json)`. nio 0.26.0 switched
@@ -50,7 +56,7 @@ The patch restores unpadded base64 (`_sas_commitment`) in both directions.
 **If removed or nio is upgraded**: Element rejects the SAS `accept`. On upgrade,
 check whether nio emits base64 commitments again.
 
-### 3. SAS emoji — `_apply_sas_emoji_patch` (`client.py:259`)
+### 3. SAS emoji — `_apply_sas_emoji_patch` (`nio_compat.py`)
 
 vodozemac's `EstablishedSas.bytes(info).emoji_indices` already returns the 7
 final emoji indices (`[u8; 7]`, values 0–63). nio 0.26.0 still runs the old
@@ -62,7 +68,7 @@ The patch returns the indices directly.
 **If removed or nio is upgraded**: emoji mismatch. On upgrade, check whether nio
 consumes `emoji_indices` directly.
 
-### 4. Legacy MAC — `_apply_sas_mac_patch` (`client.py:289`)
+### 4. Legacy MAC — `_apply_sas_mac_patch` (`nio_compat.py`)
 
 nio 0.26.0 negotiates only `hkdf-hmac-sha256` (v1, no `.v2`), but computes and
 verifies the MAC with the standard `calculate_mac` (the `.v2` wire format).

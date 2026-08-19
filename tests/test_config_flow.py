@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-
 from homeassistant.config_entries import SOURCE_IMPORT, SOURCE_USER
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.matrix_e2ee import config_flow
 from custom_components.matrix_e2ee.const import (
@@ -18,7 +18,6 @@ from custom_components.matrix_e2ee.const import (
     CONF_VERIFICATION_PEER_USERS,
     DOMAIN,
 )
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from tests.fakes import FakeNio
 
 HS = "https://matrix.example.org"
@@ -88,12 +87,103 @@ async def test_user_flow_duplicate_aborts(hass: HomeAssistant) -> None:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_HOMESERVER: HS, CONF_USERNAME: USERNAME, CONF_PASSWORD: PASSWORD},
+    assert result["type"] == "abort"
+    assert result["reason"] == "single_instance_allowed"
+
+
+async def test_user_flow_second_entry_different_username_aborts(
+    hass: HomeAssistant,
+) -> None:
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="@other-bot:example.org",
+        data={CONF_HOMESERVER: HS, CONF_USERNAME: "@other-bot:example.org"},
+    ).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
     )
     assert result["type"] == "abort"
-    assert result["reason"] == "already_configured"
+    assert result["reason"] == "single_instance_allowed"
+
+
+async def test_user_flow_normalizes_homeserver(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOMESERVER: "https://matrix.example.org/",
+            CONF_USERNAME: USERNAME,
+            CONF_PASSWORD: PASSWORD,
+        },
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"] == {
+        CONF_HOMESERVER: "https://matrix.example.org",
+        CONF_USERNAME: USERNAME,
+    }
+
+
+async def test_user_flow_rejects_http(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOMESERVER: "http://evil.example",
+            CONF_USERNAME: USERNAME,
+            CONF_PASSWORD: PASSWORD,
+        },
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "homeserver_http_not_allowed"}
+
+
+async def test_user_flow_rejects_embedded_credentials(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOMESERVER: "https://user:token@matrix.example.org",
+            CONF_USERNAME: USERNAME,
+            CONF_PASSWORD: PASSWORD,
+        },
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "homeserver_credentials"}
+
+
+def test_format_emojis_empty() -> None:
+    assert config_flow._format_emojis(None) == ""
+    assert config_flow._format_emojis([]) == ""
+
+
+def test_format_emojis_numbers_seven_pairs() -> None:
+    emojis = [
+        ["🐶", "Dog"],
+        ["🐱", "Cat"],
+        ["🦁", "Lion"],
+        ["🐎", "Horse"],
+        ["🦄", "Unicorn"],
+        ["🐷", "Pig"],
+        ["🐘", "Elephant"],
+    ]
+    rendered = config_flow._format_emojis(emojis)
+    lines = rendered.split("\n")
+    assert len(lines) == 7
+    assert lines[0] == "1. 🐶  Dog"
+    assert lines[3] == "4. 🐎  Horse"
+    assert lines[6] == "7. 🐘  Elephant"
+
+
+def test_format_emojis_numbers_from_one() -> None:
+    rendered = config_flow._format_emojis([["⚓", "Anchor"], ["☎️", "Telephone"]])
+    assert rendered == "1. ⚓  Anchor\n2. ☎️  Telephone"
 
 
 async def test_import_creates_entry_with_options(hass: HomeAssistant) -> None:

@@ -115,13 +115,13 @@
 | `nio/client/async_client.py` | `start_key_verification()` / `accept_key_verification()` / `confirm_short_auth_string()` / `cancel_key_verification()` | 面向应用的 API，内部 `to_device()` 即时发送 |
 | `nio/client/async_client.py` | `sync_forever()` → `send_to_device_messages()` | 定时排空 `outgoing_to_device_messages` 队列 |
 
-**本集成**（`custom_components/matrix_e2ee/client.py`）：
+**本集成**（`custom_components/matrix_e2ee/client.py`，SAS 补丁在 `nio_compat.py`）：
 
 | 符号 | 职责 |
 |---|---|
 | `_query_device_keys()` | 把指定账号的设备 key 预取进 `device_store`（`_query_own_device_keys()` 是其特例，登录/恢复后查机器人自己账号） |
 | `_repair_dropped_start()` | 收到 `start` 但 nio 因设备未知已丢弃时：查 sender 的 key 后把同一个 `start` 重喂给 `nio.olm.handle_key_verification()` |
-| `_patch_nio_sas_timeout()` | monkeypatch `Sas.timed_out`，忽略 nio 失效的 60s 事件超时（`_last_event_time` 从不刷新），只保留 5min 总超时 |
+| `apply_nio_compat_patches()` | `nio_compat.py` 入口，`client.py` 的 `_make_nio()` 调用；内含 `_patch_nio_sas_timeout()` 等四个 SAS monkeypatch（timeout/commitment/emoji/mac），`_patch_nio_sas_timeout()` 忽略 nio 失效的 60s 事件超时（`_last_event_time` 从不刷新），只保留 5min 总超时 |
 | `enable_verification_callbacks()` | 注册 `handle_to_device_event` 到 `add_to_device_callback` |
 | `handle_to_device_event()` | 集成回调，处理 `start` / `key` / `mac` / `cancel`（**不处理 `accept`**） |
 | `_handle_verification_request()` / `_send_verification_ready()` | 桥接 `m.key.verification.request → ready`（nio 0.26 缺框架）；校验 sender/txn/methods/timestamp 后回 `ready` |

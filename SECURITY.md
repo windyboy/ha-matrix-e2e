@@ -8,6 +8,17 @@
 - **Cross-signing authority never lives on the host.** The bot's `master` / `self-signing` / `user-signing` keys stay on a trusted Element device (or offline recovery material). The integration holds only the bot's own device keys and cannot sign new trusted devices.
 - Compromise of the host, its backups, logs, or the crypto store is compromise of the bot device. Protect them together. Home Assistant's private storage is not disk encryption; use host/volume-level encryption if you must resist offline theft.
 
+## Single bot / one config entry
+
+`matrix_e2ee` supports exactly one config entry (`"single_config_entry": true`). The session file (`.storage/matrix_e2ee_session.json`) and crypto store (`.storage/matrix_e2ee_store/`) are global to the integration, not per-entry: a second entry would rebind them to a different account and device. The Config Flow therefore aborts with "Already configured" for any second entry, regardless of username. Do not try to run two bot accounts through this integration.
+
+## Reconfigure and server-origin change
+
+Reconfigure lets you change the homeserver URL. The integration compares the **origin** (scheme, host, port), not the path or trailing slash:
+
+- **Same origin** (only trailing slash or path changed): the session and crypto store are kept, so the same device and its trust state survive.
+- **Different origin**: the integration **fails closed** — it quarantines the old session file and crypto store (renamed with a `.quarantined-*` suffix, never deleted), never sends the old access token to the new origin, and requires you to re-enter the password to log in as a **new device**. You must then re-run device verification; the new device does not inherit the old device's trust.
+
 ## Device verification (two paths)
 
 Device verification moved into the integration's Options Flow in v0.3: Settings → Devices & Services → Matrix E2EE → Configure → Verify device (a live SAS emoji wizard). The `start_verification` / `confirm_verification` / `cancel_verification` services remain available for automation, and the `matrix_e2ee_verification` event still reports every stage.

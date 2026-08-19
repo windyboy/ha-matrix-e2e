@@ -19,15 +19,25 @@
       },
       "reconfigure": {
         "title": "重新配置",
-        "description": "修改 Homeserver 地址。用户名为只读。",
+        "description": "修改 Homeserver 地址。用户名为只读。更改为不同的服务器时，机器人将以新设备身份重新登录。",
         "data": {
           "homeserver": "Homeserver 地址"
+        }
+      },
+      "reconfigure_new_device": {
+        "title": "重新配置",
+        "description": "你已将 Homeserver 更改为另一台服务器。机器人将以新设备身份重新登录；此前的会话与加密密钥将被隔离。请输入机器人账号密码。",
+        "data": {
+          "password": "密码"
         }
       }
     },
     "error": {
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "homeserver_invalid": "请输入有效的 Homeserver 地址，例如 https://matrix.example.org",
+      "homeserver_http_not_allowed": "必须使用 HTTPS。仅 localhost 允许使用 http。",
+      "homeserver_credentials": "Homeserver 地址中不得包含用户名或密码。"
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured%]",
@@ -67,7 +77,7 @@
       },
       "compare": {
         "title": "验证设备",
-        "description": "请将这些表情符号与你的 Matrix 客户端中显示的内容进行比对，它们必须完全一致。\n\n{emojis}\n\n用户：{user_id}\n设备：{device_id}",
+        "description": "请将编号表情符号与你的 Matrix 客户端逐一核对，然后确认它们是否匹配。\n\n{emojis}\n\n用户：{user_id}\n设备：{device_id}",
         "menu_options": {
           "match": "它们匹配",
           "mismatch": "它们不匹配"

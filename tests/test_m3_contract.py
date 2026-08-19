@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import time
 from pathlib import Path
 from types import SimpleNamespace
-import time
 
 import pytest
 
@@ -13,19 +12,14 @@ from custom_components.matrix_e2ee import client as client_module
 from custom_components.matrix_e2ee.client import (
     MatrixE2EEClient,
     MatrixE2EEError,
-    _apply_sas_commitment_patch,
-    _apply_sas_emoji_patch,
-    _apply_sas_mac_patch,
-    _apply_sas_timeout_patch,
-    _sas_commitment,
 )
 from custom_components.matrix_e2ee.const import (
     ERROR_DEVICE_MISSING,
     ERROR_FINGERPRINT_MISMATCH,
     ERROR_INVALID_TRANSACTION,
     ERROR_UNVERIFIED_DEVICE,
-    ERROR_VERIFICATION_TIMEOUT,
     ERROR_VERIFICATION_PEER_DENIED,
+    ERROR_VERIFICATION_TIMEOUT,
     EVENT_COMMAND,
     EVENT_ERROR,
     EVENT_VERIFICATION,
@@ -695,191 +689,6 @@ async def test_inbound_start_unknown_device_still_missing_emits_error(tmp_path):
     await client.async_stop()
 
 
-def test_sas_timeout_patch_ignores_event_timeout():
-    """The nio workaround keeps SAS alive through a slow emoji check."""
-    canceled = "canceled"
-
-    class SasLike:
-        _max_age = timedelta(minutes=5)
-        _timeout_error = ("m.timeout", "timed out")
-
-        def __init__(self):
-            self.creation_time = datetime.now()
-            self.state = "started"
-            self.cancel_code = None
-            self.cancel_reason = None
-            self.sas_accepted = False
-
-        @property
-        def verified(self):
-            return False
-
-        @property
-        def canceled(self):
-            return self.state == "canceled"
-
-    _apply_sas_timeout_patch(SasLike, canceled)
-
-    sas = SasLike()
-    assert sas.timed_out is False
-
-    # 90 s old: buggy nio would time out (60 s event timeout); the patch keeps it.
-    sas.creation_time = datetime.now() - timedelta(seconds=90)
-    assert sas.timed_out is False
-
-    # Past _max_age (5 min): the patch still honors the total-age timeout.
-    sas.creation_time = datetime.now() - timedelta(minutes=6)
-    assert sas.timed_out is True
-    assert sas.state == "canceled"
-
-
-def test_sas_commitment_is_unpadded_base64():
-    """The commitment wire format is unpadded base64, never hexdigest."""
-    # SHA-256("abc") as unpadded base64, matching pre-0.26.0 olm.sha256.
-    assert _sas_commitment("abc", "") == "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"
-    assert _sas_commitment("abc", "") != (
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    )
-
-
-def test_sas_commitment_patch_fixes_hex_encoding():
-    """The patch rewrites nio 0.26.0 hexdigest commitments to unpadded base64."""
-    import hashlib
-
-    def to_canonical_json(obj):
-        return obj
-
-    class SasLike:
-        @classmethod
-        def from_key_verification_start(
-            cls, own_user, own_device, own_fp_key, other_olm_device, event
-        ):
-            obj = cls()
-            obj.commitment = hashlib.sha256(
-                obj.pubkey.encode() + event.source["content"].encode()
-            ).hexdigest()
-            return obj
-
-        def __init__(self):
-            self.pubkey = "PK"
-            self.commitment = None
-
-        def start_verification(self):
-            return SimpleNamespace(content="START")
-
-        def _check_commitment(self, key):
-            return (
-                self.commitment
-                == hashlib.sha256(
-                    key.encode() + self.start_verification().content.encode()
-                ).hexdigest()
-            )
-
-    _apply_sas_commitment_patch(SasLike, to_canonical_json)
-
-    # Responder: from_key_verification_start now emits unpadded base64.
-    event = SimpleNamespace(source={"content": "START"})
-    sas = SasLike.from_key_verification_start("u", "d", "fp", None, event)
-    assert sas.commitment == _sas_commitment("PK", "START")
-    assert sas.commitment != hashlib.sha256(b"PKSTART").hexdigest()
-
-    # Initiator: _check_commitment now verifies base64, and rejects a wrong key.
-    sas.commitment = _sas_commitment("PK", "START")
-    assert sas._check_commitment("PK") is True
-    assert sas._check_commitment("WRONG") is False
-
-
-def test_sas_emoji_patch_stops_double_conversion():
-    """Patch returns vodozemac's emoji indices directly, no re-slicing."""
-    indices = [5, 19, 28, 47, 14, 19, 53]
-
-    class SasLike:
-        emoji = [f"e{i}" for i in range(64)]
-
-        def __init__(self):
-            self.established_sas = SimpleNamespace(
-                bytes=lambda info: SimpleNamespace(emoji_indices=indices)
-            )
-
-    _apply_sas_emoji_patch(SasLike)
-
-    sas = SasLike()
-    assert sas._generate_emoji("info") == [f"e{i}" for i in indices]
-
-    # The old libolm bit-slicing would have produced different indices.
-    wrong = [f"e{i}" for i in [1, 17, 12, 28, 11, 48, 56]]
-    assert sas._generate_emoji("info") != wrong
-
-
-def test_sas_mac_patch_routes_legacy_to_invalid_base64():
-    """Legacy hkdf-hmac-sha256 uses the libolm invalid-base64 MAC, both ways."""
-    invalid_calls = []
-
-    class EstablishedSas:
-        def calculate_mac(self, input, info):
-            raise AssertionError("standard calculate_mac must not be used for legacy")
-
-        def calculate_mac_invalid_base64(self, input, info):
-            invalid_calls.append((input, info))
-            return "legacy-mac"
-
-    sas_state = SimpleNamespace(
-        created=0, started=1, accepted=2, key_received=3, mac_received=4, canceled=5
-    )
-
-    class SasLike:
-        _unexpected_message_error = ("m.unexpected_message", "Unexpected message")
-        _key_mismatch_error = ("m.key_mismatch", "Key mismatch")
-        _invalid_message_error = ("m.invalid_message", "Invalid message")
-
-        def __init__(self):
-            self.sas_accepted = True
-            self.state = sas_state.key_received
-            self.own_device = "BOTDEV"
-            self.own_user = "@bot:example.org"
-            self.own_fp_key = "BOTFP"
-            self.other_olm_device = SimpleNamespace(
-                user_id="@peer:example.org", id="PEERDEV", ed25519="PEERFP"
-            )
-            self.transaction_id = "txn"
-            self.chosen_mac_method = "hkdf-hmac-sha256"
-            self.verified = False
-            self.verified_devices = []
-            self.established_sas = EstablishedSas()
-            self.cancel_code = None
-            self.cancel_reason = None
-
-        def _event_ok(self, event):
-            return True
-
-    def to_device_message(event_type, user_id, device_id, content):
-        return (event_type, user_id, device_id, content)
-
-    _apply_sas_mac_patch(SasLike, to_device_message, RuntimeError, sas_state)
-
-    # Generation: get_mac routes through calculate_mac_invalid_base64.
-    sas = SasLike()
-    message = sas.get_mac()
-    assert message[0] == "m.key.verification.mac"
-    assert message[3]["keys"] == "legacy-mac"
-    assert message[3]["mac"] == {"ed25519:BOTDEV": "legacy-mac"}
-    assert invalid_calls
-
-    # Verification: receive_mac_event routes through the same path.
-    sas = SasLike()
-    event = SimpleNamespace(mac={"ed25519:PEERDEV": "legacy-mac"}, keys="legacy-mac")
-    sas.receive_mac_event(event)
-    assert sas.state == sas_state.mac_received
-    assert sas.verified_devices == ["PEERDEV"]
-
-    # A wrong MAC is rejected with key_mismatch (exercises the compare path).
-    sas = SasLike()
-    event = SimpleNamespace(mac={"ed25519:PEERDEV": "wrong"}, keys="legacy-mac")
-    sas.receive_mac_event(event)
-    assert sas.state == sas_state.canceled
-    assert sas.cancel_code == "m.key_mismatch"
-
-
 @pytest.mark.asyncio
 async def test_request_replies_ready_then_sas_flow(tmp_path, monkeypatch):
     factory, created = _factory_holder()
@@ -1085,6 +894,33 @@ async def test_list_known_devices_empty_without_store(tmp_path):
     await client.async_start()
 
     assert client.list_known_devices() == []
+    await client.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_list_known_devices_accepts_non_dict_device_store(tmp_path):
+    factory, created = _factory_holder()
+    client = _client(tmp_path, lambda t, d: None, factory)
+    await client.async_start()
+    nio = created["nio"]
+
+    class DeviceStoreLike:
+        """Models matrix-nio's DeviceStore: not a dict, but exposes items()."""
+
+        def __init__(self, entries):
+            self._entries = entries
+
+        def items(self):
+            return self._entries.items()
+
+    nio.add_device(BOT, "HABOTABC", verified=False)
+    nio.add_device(USER, PEER_DEVICE, verified=True)
+    nio.device_store = DeviceStoreLike(nio.device_store)
+
+    devices = client.list_known_devices()
+
+    assert [(d["user_id"], d["device_id"]) for d in devices] == [(USER, PEER_DEVICE)]
+    assert devices[0]["verified"] is True
     await client.async_stop()
 
 

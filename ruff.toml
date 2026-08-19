@@ -1,0 +1,23 @@
+target-version = "py313"
+line-length = 88
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "C4",   # flake8-comprehensions
+    "RET",  # flake8-return
+    "RUF",  # ruff-specific
+    "BLE",  # flake8-blind-except
+]
+ignore = [
+    "E501",  # line length is enforced by the formatter (docstrings/log messages only)
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["RUF012", "RUF059"]

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
+import contextlib
 import logging
 import secrets
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -19,20 +18,20 @@ from .const import (
     ERROR_DEVICE_MISSING,
     ERROR_ENCRYPTION_UNAVAILABLE,
     ERROR_FINGERPRINT_MISMATCH,
+    ERROR_HARD_LOGOUT,
+    ERROR_INVALID_STATE,
     ERROR_INVALID_TRANSACTION,
     ERROR_LOGIN_FAILED,
     ERROR_PASSWORD_REQUIRED,
+    ERROR_REFRESH_TOKEN_UNSUPPORTED,
     ERROR_RESTORE_FAILED,
     ERROR_ROOM_NOT_ALLOWED,
     ERROR_SEND_FAILED,
     ERROR_SESSION_MISSING,
     ERROR_SOFT_LOGOUT,
-    ERROR_HARD_LOGOUT,
-    ERROR_REFRESH_TOKEN_UNSUPPORTED,
     ERROR_UNVERIFIED_DEVICE,
-    ERROR_VERIFICATION_TIMEOUT,
     ERROR_VERIFICATION_PEER_DENIED,
-    ERROR_INVALID_STATE,
+    ERROR_VERIFICATION_TIMEOUT,
     EVENT_COMMAND,
     EVENT_ERROR,
     EVENT_VERIFICATION,
@@ -45,6 +44,7 @@ from .const import (
     VERIFICATION_REQUEST_MAX_FUTURE_MS,
     VERIFICATION_TIMEOUT_SECONDS,
 )
+from .nio_compat import apply_nio_compat_patches
 from .storage import (
     MatrixSession,
     SessionError,
@@ -57,6 +57,10 @@ from .storage import (
 _LOGGER = logging.getLogger(__name__)
 
 NioClientFactory = Callable[..., Any]
+
+# Maximum number of verified peers surfaced in diagnostic attributes. Counts are
+# never capped; only the human-readable peer list is truncated.
+MAX_VERIFIED_PEERS = 10
 
 _ENCRYPTED_EVENT_TYPES = frozenset(
     {"m.room.encrypted", "MegolmEvent", "OlmEvent", "EncryptedEvent"}
@@ -128,9 +132,7 @@ def _is_soft_logout(response: Any) -> bool:
     if bool(getattr(response, "soft_logout", False)):
         return True
     body = getattr(response, "body", None)
-    if isinstance(body, dict) and bool(body.get("soft_logout")):
-        return True
-    return False
+    return isinstance(body, dict) and bool(body.get("soft_logout"))
 
 
 def _is_auth_failure(response: Any) -> bool:
@@ -162,244 +164,6 @@ async def _maybe_await(value: Any) -> Any:
     if hasattr(value, "__await__"):
         return await value
     return value
-
-
-def _apply_sas_timeout_patch(sas_cls: Any, canceled_state: Any) -> None:
-    """Patch ``sas_cls.timed_out`` to ignore the 60 s event timeout (nio bug).
-
-    matrix-nio 0.26.0 assigns ``Sas._last_event_time`` once in ``__init__`` and
-    never refreshes it, so ``timed_out`` returns True exactly 60 s after creation
-    regardless of activity. Keep only ``_max_age`` (5 min) so the SAS survives a
-    slow human emoji comparison.
-    """
-    if getattr(sas_cls, "_matrix_e2ee_timeout_patched", False):
-        return
-
-    def timed_out(self: Any) -> bool:
-        if self.verified or self.canceled:
-            return False
-        if datetime.now() - self.creation_time >= self._max_age:
-            self.state = canceled_state
-            self.cancel_code, self.cancel_reason = self._timeout_error
-            return True
-        return False
-
-    sas_cls.timed_out = property(timed_out)
-    sas_cls._matrix_e2ee_timeout_patched = True
-
-
-def _patch_nio_sas_timeout() -> None:
-    """Work around nio 0.26.0 ``_last_event_time`` bug. No-op when nio is absent."""
-    try:
-        from nio.crypto.sas import Sas, SasState
-    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
-        return
-    _apply_sas_timeout_patch(Sas, SasState.canceled)
-
-
-def _sas_commitment(pubkey: str, canonical: str) -> str:
-    """Return SHA-256(pubkey || canonical) as unpadded base64.
-
-    This is the wire format the Matrix spec requires for the SAS commitment in
-    ``m.key.verification.accept``. nio 0.26.0 emits ``.hexdigest()`` instead,
-    which Element rejects with ``m.key_mismatch``.
-    """
-    digest = hashlib.sha256(pubkey.encode() + canonical.encode()).digest()
-    return base64.b64encode(digest).decode("ascii").rstrip("=")
-
-
-def _apply_sas_commitment_patch(
-    sas_cls: Any, to_canonical_json: Callable[[Any], str]
-) -> None:
-    """Rewrite nio 0.26.0 hexdigest commitments back to unpadded base64.
-
-    nio 0.26.0 replaced ``olm.sha256`` (unpadded base64) with
-    ``hashlib.sha256(...).hexdigest()`` in both ``from_key_verification_start``
-    (responder, builds the ``accept`` commitment) and ``_check_commitment``
-    (initiator, verifies the peer's commitment). Both changed together, so
-    nio↔nio still agrees while Element/rust-sdk (base64) cancels with
-    ``m.key_mismatch``. Restore base64 in both directions so neither nio↔nio
-    nor nio↔Element regresses.
-    """
-    if getattr(sas_cls, "_matrix_e2ee_commitment_patched", False):
-        return
-
-    original_from_start = sas_cls.from_key_verification_start.__func__
-
-    @classmethod
-    def patched_from_start(
-        cls, own_user, own_device, own_fp_key, other_olm_device, event
-    ):
-        sas = original_from_start(
-            cls, own_user, own_device, own_fp_key, other_olm_device, event
-        )
-        canonical = to_canonical_json(event.source["content"])
-        sas.commitment = _sas_commitment(sas.pubkey, canonical)
-        return sas
-
-    def patched_check_commitment(self, key):
-        canonical = to_canonical_json(self.start_verification().content)
-        return self.commitment == _sas_commitment(key, canonical)
-
-    sas_cls.from_key_verification_start = patched_from_start
-    sas_cls._check_commitment = patched_check_commitment
-    sas_cls._matrix_e2ee_commitment_patched = True
-
-
-def _patch_nio_sas_commitment() -> None:
-    """Fix nio 0.26.0 SAS commitment encoding. No-op when nio is absent."""
-    try:
-        from nio.api import Api
-        from nio.crypto.sas import Sas
-    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
-        return
-    _apply_sas_commitment_patch(Sas, Api.to_canonical_json)
-
-
-def _apply_sas_emoji_patch(sas_cls: Any) -> None:
-    """Stop nio 0.26.0 from re-slicing vodozemac's emoji indices.
-
-    vodozemac's ``EstablishedSas.bytes(info).emoji_indices`` already returns
-    the 7 final emoji indices (``[u8; 7]``, values 0-63). nio 0.26.0 still
-    runs the old libolm bit-slicing over them, treating the indices as raw
-    bytes, so the rendered emoji disagree with Element (``m.mismatched_sas``).
-    Return the indices directly.
-    """
-    if getattr(sas_cls, "_matrix_e2ee_emoji_patched", False):
-        return
-
-    def patched_generate_emoji(self, extra_info):
-        assert self.established_sas
-        indices = self.established_sas.bytes(extra_info).emoji_indices
-        return [self.emoji[index] for index in indices]
-
-    sas_cls._generate_emoji = patched_generate_emoji
-    sas_cls._matrix_e2ee_emoji_patched = True
-
-
-def _patch_nio_sas_emoji() -> None:
-    """Fix nio 0.26.0 SAS emoji rendering. No-op when nio is absent."""
-    try:
-        from nio.crypto.sas import Sas
-    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
-        return
-    _apply_sas_emoji_patch(Sas)
-
-
-def _apply_sas_mac_patch(
-    sas_cls: Any,
-    to_device_message: Any,
-    local_protocol_error: Any,
-    sas_state: Any,
-) -> None:
-    """Route legacy hkdf-hmac-sha256 to vodozemac's libolm-compat MAC.
-
-    nio 0.26.0 negotiates ``hkdf-hmac-sha256`` (v1) but computes and verifies
-    the MAC with the standard ``calculate_mac`` (valid base64, the ``.v2``
-    wire format). The v1 wire format is libolm's invalid-base64 output, so
-    Element cancels with ``m.key_mismatch``. Route the legacy method to
-    ``calculate_mac_invalid_base64`` in both directions so generation and
-    verification agree.
-    """
-    if getattr(sas_cls, "_matrix_e2ee_mac_patched", False):
-        return
-
-    def _select_mac_func(self):
-        if self.chosen_mac_method == "hkdf-hmac-sha256":
-            return self.established_sas.calculate_mac_invalid_base64
-        return self.established_sas.calculate_mac
-
-    def get_mac(self):
-        if not self.sas_accepted:
-            raise local_protocol_error("SAS string wasn't yet accepted")
-        if self.state == sas_state.canceled:
-            raise local_protocol_error(
-                "SAS verification was canceled, can't generate MAC."
-            )
-        key_id = f"ed25519:{self.own_device}"
-        assert self.established_sas
-        assert self.chosen_mac_method
-        calculate_mac = _select_mac_func(self)
-        info = (
-            "MATRIX_KEY_VERIFICATION_MAC"
-            f"{self.own_user}{self.own_device}"
-            f"{self.other_olm_device.user_id}{self.other_olm_device.id}"
-            f"{self.transaction_id}"
-        )
-        mac = {key_id: calculate_mac(self.own_fp_key, info + key_id)}
-        content = {
-            "mac": mac,
-            "keys": calculate_mac(key_id, info + "KEY_IDS"),
-            "transaction_id": self.transaction_id,
-        }
-        return to_device_message(
-            "m.key.verification.mac",
-            self.other_olm_device.user_id,
-            self.other_olm_device.id,
-            content,
-        )
-
-    def receive_mac_event(self, event):
-        if self.verified:
-            return
-        if not self._event_ok(event):
-            return
-        if self.state != sas_state.key_received:
-            self.state = sas_state.canceled
-            self.cancel_code, self.cancel_reason = self._unexpected_message_error
-            return
-        info = (
-            f"MATRIX_KEY_VERIFICATION_MAC{self.other_olm_device.user_id}"
-            f"{self.other_olm_device.id}{self.own_user}{self.own_device}"
-            f"{self.transaction_id}"
-        )
-        key_ids = ",".join(sorted(event.mac.keys()))
-        assert self.established_sas
-        assert self.chosen_mac_method
-        calculate_mac = _select_mac_func(self)
-        if event.keys != calculate_mac(key_ids, info + "KEY_IDS"):
-            self.state = sas_state.canceled
-            self.cancel_code, self.cancel_reason = self._key_mismatch_error
-            return
-        for key_id, key_mac in event.mac.items():
-            try:
-                key_type, device_id = key_id.split(":", 2)
-            except ValueError:
-                self.state = sas_state.canceled
-                self.cancel_code, self.cancel_reason = self._invalid_message_error
-                return
-            if key_type != "ed25519":
-                self.state = sas_state.canceled
-                self.cancel_code, self.cancel_reason = self._key_mismatch_error
-                return
-            if device_id != self.other_olm_device.id:
-                continue
-            other_fp_key = self.other_olm_device.ed25519
-            if key_mac != calculate_mac(other_fp_key, info + key_id):
-                self.state = sas_state.canceled
-                self.cancel_code, self.cancel_reason = self._key_mismatch_error
-                return
-            self.verified_devices.append(device_id)
-        if not self.verified_devices:
-            self.state = sas_state.canceled
-            self.cancel_code, self.cancel_reason = self._key_mismatch_error
-            return
-        self.state = sas_state.mac_received
-
-    sas_cls.get_mac = get_mac
-    sas_cls.receive_mac_event = receive_mac_event
-    sas_cls._matrix_e2ee_mac_patched = True
-
-
-def _patch_nio_sas_mac() -> None:
-    """Fix nio 0.26.0 legacy SAS MAC encoding. No-op when nio is absent."""
-    try:
-        from nio.crypto.sas import Sas, SasState
-        from nio.event_builders import ToDeviceMessage
-        from nio.exceptions import LocalProtocolError
-    except Exception:  # noqa: BLE001 — nio may not be installed (tests)
-        return
-    _apply_sas_mac_patch(Sas, ToDeviceMessage, LocalProtocolError, SasState)
 
 
 def room_allowed(room_id: str, allowed_rooms: list[str]) -> bool:
@@ -451,9 +215,7 @@ def _requires_verified_sender(room: Any, event: Any) -> bool:
     event_type = getattr(event, "type", None)
     if event_type in _ENCRYPTED_EVENT_TYPES:
         return True
-    if type(event).__name__ in _ENCRYPTED_EVENT_TYPES:
-        return True
-    return False
+    return type(event).__name__ in _ENCRYPTED_EVENT_TYPES
 
 
 class MatrixE2EEClient:
@@ -500,10 +262,7 @@ class MatrixE2EEClient:
         pickle_key: str,
         device_id: str | None,
     ) -> Any:
-        _patch_nio_sas_timeout()
-        _patch_nio_sas_commitment()
-        _patch_nio_sas_emoji()
-        _patch_nio_sas_mac()
+        apply_nio_compat_patches()
         store = str(await asyncio.to_thread(ensure_store_dir, self._config_dir))
         factory = self._nio_client_factory
         if factory is not None:
@@ -697,7 +456,7 @@ class MatrixE2EEClient:
             task.cancel()
             try:
                 await task
-            except asyncio.CancelledError:  # noqa: BLE001 — expected on cancel
+            except asyncio.CancelledError:
                 pass
             except Exception:  # noqa: BLE001 — shutdown must not raise
                 pass
@@ -749,6 +508,7 @@ class MatrixE2EEClient:
         except OSError:
             store_present = False
         session = self.session
+        devices = self.list_known_devices()
         return {
             "user_id": session.user_id if session is not None else None,
             "device_id": session.device_id if session is not None else None,
@@ -757,15 +517,32 @@ class MatrixE2EEClient:
             "soft_logged_out": self._soft_logged_out,
             "encryption_enabled": True,
             "store_sync_tokens": True,
+            "known_device_count": len(devices),
+            "verified_peer_count": sum(1 for device in devices if device["verified"]),
         }
 
     def connection_health(self) -> dict[str, Any]:
-        """Return non-secret connection state for the diagnostic sensor."""
+        """Return non-secret connection state for the diagnostic sensor.
+
+        ``known_device_count``/``verified_peer_count`` report devices this bot
+        has marked verified in its own crypto store (peer devices only, never
+        the bot's own device). ``verified_peers`` is a capped, key-free list of
+        those verified peers for human inspection.
+        """
         session = self.session
+        devices = self.list_known_devices()
+        verified_peers = [
+            {"user_id": device["user_id"], "device_id": device["device_id"]}
+            for device in devices
+            if device["verified"]
+        ]
         return {
             "connected": self.nio is not None and not self._soft_logged_out,
             "soft_logged_out": self._soft_logged_out,
             "device_id": session.device_id if session is not None else None,
+            "known_device_count": len(devices),
+            "verified_peer_count": len(verified_peers),
+            "verified_peers": verified_peers[:MAX_VERIFIED_PEERS],
         }
 
     def safe_fingerprint(self) -> dict[str, Any] | None:
@@ -805,7 +582,7 @@ class MatrixE2EEClient:
         self._install_secret_filter()
         try:
             response = await nio.login(password, device_name=DEVICE_NAME)
-        except Exception as err:  # noqa: BLE001 — never log the password
+        except Exception as err:
             self._password = previous_password
             self._install_secret_filter()
             self._emit_error(ERROR_LOGIN_FAILED)
@@ -881,7 +658,7 @@ class MatrixE2EEClient:
                 {"msgtype": "m.text", "body": message},
                 ignore_unverified_devices=False,
             )
-        except Exception as err:  # noqa: BLE001 — map SDK failures, never log body
+        except Exception as err:
             code = _send_error_code(err)
             self._emit_error(code, room_id=room_id)
             raise MatrixE2EEError(code, "encrypted send failed") from err
@@ -982,7 +759,7 @@ class MatrixE2EEClient:
     def _verification_expires_at(self) -> str:
         """ISO UTC timestamp when the current SAS offer expires."""
         return (
-            datetime.now(timezone.utc) + timedelta(seconds=self._verification_timeout)
+            datetime.now(UTC) + timedelta(seconds=self._verification_timeout)
         ).isoformat()
 
     def _lookup_device(self, nio: Any, user_id: str, device_id: str) -> Any | None:
@@ -1095,17 +872,23 @@ class MatrixE2EEClient:
         )
 
     def list_known_devices(self) -> list[dict[str, Any]]:
-        """Return known devices from the crypto store, excluding the bot's own device."""
+        """Return known devices from the crypto store, excluding the bot's own device.
+
+        Accepts either a plain ``dict`` (used by tests) or matrix-nio's
+        ``DeviceStore`` object, both of which expose an ``items()`` view of
+        ``user_id -> {device_id: device}``.
+        """
         nio = self.nio
         if nio is None:
             return []
         store = getattr(nio, "device_store", None)
-        if not isinstance(store, dict):
+        items = getattr(store, "items", None)
+        if items is None:
             return []
         own_user = getattr(nio, "user_id", None)
         own_device = getattr(nio, "device_id", None)
         devices: list[dict[str, Any]] = []
-        for user_id, user_devices in store.items():
+        for user_id, user_devices in items():
             if not isinstance(user_devices, dict):
                 continue
             for device_id, device in user_devices.items():
@@ -1144,7 +927,7 @@ class MatrixE2EEClient:
             )
         try:
             response = await _maybe_await(start(device))
-        except Exception as err:  # noqa: BLE001 — never log device keys
+        except Exception as err:
             code = _verification_error_code(err)
             self._emit_error(code, user_id=user_id, device_id=device_id)
             raise MatrixE2EEError(code, "start verification failed") from err
@@ -1229,7 +1012,7 @@ class MatrixE2EEClient:
             )
         try:
             response = await _maybe_await(confirm(transaction_id))
-        except Exception as err:  # noqa: BLE001 — never log SAS secrets
+        except Exception as err:
             code = _verification_error_code(err)
             self._emit_error(code, transaction_id=transaction_id)
             raise MatrixE2EEError(code, "confirm verification failed") from err
@@ -1273,7 +1056,7 @@ class MatrixE2EEClient:
         if cancel is not None:
             try:
                 response = await _maybe_await(cancel(transaction_id, reject=False))
-            except Exception as err:  # noqa: BLE001 — cancel must still emit
+            except Exception as err:
                 code = _verification_error_code(err)
                 self._emit_error(code, transaction_id=transaction_id)
                 raise MatrixE2EEError(code, "cancel verification failed") from err
@@ -1298,10 +1081,8 @@ class MatrixE2EEClient:
             and sas is not None
             and not bool(getattr(sas, "canceled", False))
         ):
-            try:
+            with contextlib.suppress(Exception):
                 await _maybe_await(cancel(transaction_id, reject=False))
-            except Exception:  # noqa: BLE001 — timeout path still reports timeout
-                pass
         self._sas_started_at.pop(transaction_id, None)
         self._emit_error(ERROR_VERIFICATION_TIMEOUT, transaction_id=transaction_id)
         self._emit_verification(
@@ -1368,8 +1149,7 @@ class MatrixE2EEClient:
         methods = content.get("methods") if content is not None else None
         timestamp = content.get("timestamp") if content is not None else None
         _LOGGER.info(
-            "matrix_e2ee request received: sender=%s from_device=%s txn=%s "
-            "methods=%s ts=%s",
+            "matrix_e2ee request received: sender=%s from_device=%s txn=%s methods=%s ts=%s",
             sender,
             from_device,
             transaction_id,
@@ -1579,16 +1359,15 @@ class MatrixE2EEClient:
                 expires_at=self._verification_expires_at(),
             )
             return
-        if kind == "mac":
-            if bool(getattr(sas, "verified", False)):
-                self._sas_started_at.pop(transaction_id, None)
-                await self._send_verification_done(user_id, device_id, transaction_id)
-                self._emit_verification(
-                    "done",
-                    transaction_id=transaction_id,
-                    user_id=user_id,
-                    device_id=device_id,
-                )
+        if kind == "mac" and bool(getattr(sas, "verified", False)):
+            self._sas_started_at.pop(transaction_id, None)
+            await self._send_verification_done(user_id, device_id, transaction_id)
+            self._emit_verification(
+                "done",
+                transaction_id=transaction_id,
+                user_id=user_id,
+                device_id=device_id,
+            )
 
 
 def _key_verification_event_type() -> Any:

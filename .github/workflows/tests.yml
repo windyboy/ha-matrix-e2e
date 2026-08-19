@@ -5,6 +5,20 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install lint tool
+        run: pip install ruff==0.16.3
+      - name: Lint
+        run: ruff check custom_components/ tests/
+      - name: Format check
+        run: ruff format --check custom_components/ tests/
+
   pytest:
     runs-on: ubuntu-latest
     steps:
@@ -14,5 +28,20 @@ jobs:
           python-version: "3.14"
       - name: Install test dependencies
         run: pip install -r requirements-dev.txt
-      - name: Run mock tests
-        run: python -m pytest
+      - name: Run mock tests with coverage
+        run: python -m pytest --cov=custom_components.matrix_e2ee --cov-fail-under=81
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install audit tool
+        run: pip install pip-audit==2.10.1
+      - name: Extract runtime requirements from manifest
+        run: |
+          python -c "import json; print('\n'.join(json.load(open('custom_components/matrix_e2ee/manifest.json'))['requirements']))" > runtime-requirements.txt
+      - name: Audit runtime dependencies
+        run: pip-audit --requirement runtime-requirements.txt

@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components.matrix_e2ee as matrix_e2ee
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
@@ -17,7 +17,6 @@ from custom_components.matrix_e2ee.const import (
     SERVICE_REAUTHENTICATE,
     SERVICE_SEND_MESSAGE,
 )
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from tests.fakes import FakeNio
 
 HS = "https://matrix.example.org"

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import pytest
-
 from homeassistant.core import HomeAssistant
 
-from custom_components.matrix_e2ee import async_setup
-from custom_components.matrix_e2ee import config_flow
+from custom_components.matrix_e2ee import async_setup, config_flow
 from custom_components.matrix_e2ee.client import MatrixE2EEClient
 from custom_components.matrix_e2ee.const import (
     CONF_ALLOWED_ROOMS,

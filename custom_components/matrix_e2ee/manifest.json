@@ -3,6 +3,7 @@
   "name": "Matrix E2EE",
   "codeowners": ["@windyboy"],
   "config_flow": true,
+  "single_config_entry": true,
   "documentation": "https://github.com/windyboy/ha-matrix-e2ee",
   "iot_class": "cloud_push",
   "loggers": ["custom_components.matrix_e2ee", "nio"],
@@ -13,5 +14,5 @@
     "cachetools>=5.3",
     "atomicwrites~=1.4"
   ],
-  "version": "0.3.8"
+  "version": "0.3.9"
 }
