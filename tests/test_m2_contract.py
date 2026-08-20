@@ -16,6 +16,7 @@ from custom_components.matrix_e2ee.const import (
     ERROR_UNVERIFIED_DEVICE,
     EVENT_COMMAND,
     EVENT_ERROR,
+    EVENT_MESSAGE_RECEIVED,
     NIO_DEFAULT_PICKLE_KEY,
 )
 from custom_components.matrix_e2ee.storage import (
@@ -139,7 +140,7 @@ async def test_store_loss_is_new_device_not_history_recovery(tmp_path):
     assert "recover" not in message
 
 
-def test_no_admin_token_or_plaintext_message_event():
+def test_no_admin_token_or_plaintext_message_payload():
     client_src = _src("client.py")
     init_src = _src("__init__.py")
     const_src = _src("const.py")
@@ -148,8 +149,8 @@ def test_no_admin_token_or_plaintext_message_event():
         assert "login_raw" not in blob
         assert "admin_token" not in blob
         assert "ignore_unverified_devices=True" not in blob
-        assert "matrix_e2ee_message" not in blob
-    assert "EVENT_MESSAGE" not in const_src
+    assert "login_with_token" not in const_src
+    assert 'matrix_e2ee_message"' not in const_src
 
 
 @pytest.mark.asyncio
@@ -205,7 +206,7 @@ async def test_encrypted_room_without_olm_never_sends_plaintext(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_non_command_encrypted_text_does_not_fire_message_event(tmp_path):
+async def test_non_command_encrypted_text_fires_metadata_only_event(tmp_path):
     factory, _ = _factory_holder()
     events = []
     client = _client(tmp_path, lambda t, d: events.append((t, d)), factory)
@@ -221,8 +222,8 @@ async def test_non_command_encrypted_text_does_not_fire_message_event(tmp_path):
             type="m.room.message",
         ),
     )
-    assert events == []
-    assert all(item[0] != "matrix_e2ee_message" for item in events)
+    assert events == [(EVENT_MESSAGE_RECEIVED, {"sender": USER, "room_id": ROOM})]
+    assert SECRET_BODY not in str(events)
     await client.async_stop()
 
 

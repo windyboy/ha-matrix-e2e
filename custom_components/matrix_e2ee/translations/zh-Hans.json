@@ -95,5 +95,12 @@
       "verification_timeout": "设备验证超时。",
       "verification_complete": "设备验证完成。"
     }
+  },
+  "entity": {
+    "event": {
+      "bot_activity": {
+        "name": "机器人活动"
+      }
+    }
   }
 }

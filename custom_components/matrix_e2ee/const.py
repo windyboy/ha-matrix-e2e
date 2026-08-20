@@ -37,6 +37,8 @@ EVENT_COMMAND = "matrix_e2ee_command"
 EVENT_ERROR = "matrix_e2ee_error"
 EVENT_VERIFICATION = "matrix_e2ee_verification"
 EVENT_FINGERPRINT = "matrix_e2ee_fingerprint"
+EVENT_MESSAGE_RECEIVED = "matrix_e2ee_message_received"
+EVENT_VERIFICATION_DONE = "matrix_e2ee_verification_done"
 
 DEVICE_NAME = "Home Assistant matrix_e2ee"
 

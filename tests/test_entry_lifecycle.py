@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components.matrix_e2ee as matrix_e2ee
@@ -129,3 +130,26 @@ async def test_sync_loop_is_background_task(
     await asyncio.wait_for(hass.async_block_till_done(), timeout=1)
 
     assert await hass.config_entries.async_unload(entry.entry_id) is True
+
+
+async def test_service_failure_emits_legacy_event_and_raises(
+    hass: HomeAssistant, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Services must be actionable to HA while retaining the legacy event."""
+    monkeypatch.setattr(matrix_e2ee, "_NIO_CLIENT_FACTORY", FakeNio)
+    await _seed_session(tmp_path)
+    entry = _make_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id) is True
+    await hass.async_block_till_done()
+
+    errors: list[dict] = []
+    hass.bus.async_listen("matrix_e2ee_error", lambda event: errors.append(event.data))
+    with pytest.raises(ServiceValidationError, match="room_not_allowed"):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_SEND_MESSAGE,
+            {"room_id": "!not-allowed:example.org", "message": "hello"},
+            blocking=True,
+        )
+    assert any(error["code"] == "room_not_allowed" for error in errors)
+    await hass.config_entries.async_unload(entry.entry_id)

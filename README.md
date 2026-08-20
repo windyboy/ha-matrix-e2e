@@ -32,7 +32,7 @@ Home Assistant **custom** integration that runs a dedicated Matrix bot with a pe
 | [Development notes](docs/DEVELOPMENT.md) ([中文](docs/DEVELOPMENT.zh.md)) | Contributors | Environment, tests, CI, local install |
 | [Changelog](CHANGELOG.md) | Everyone | Release history |
 
-Current release: **v0.3.11** (see `custom_components/matrix_e2ee/manifest.json`).
+Current release: **v0.3.12** (see `custom_components/matrix_e2ee/manifest.json`).
 
 ## Installation
 
@@ -56,7 +56,7 @@ mkdir -p /config/custom_components
 cp -a custom_components/matrix_e2ee /config/custom_components/matrix_e2ee
 ```
 
-**From git** (replace `v0.3.11` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
+**From git** (replace `v0.3.12` with the [release tag](https://github.com/windyboy/ha-matrix-e2ee/releases) you want):
 
 ```bash
 git clone --depth 1 --branch v0.3.11 https://github.com/windyboy/ha-matrix-e2ee.git /tmp/ha-matrix-e2ee
@@ -190,11 +190,13 @@ Admin-only services are enforced by Home Assistant's admin-service helper.
 | `matrix_e2ee_command` | `room_id`, `sender`, `command`, `args` only — never the raw body |
 | `matrix_e2ee_error` | `code` plus non-secret context fields (see [Error codes](#error-codes)) |
 | `matrix_e2ee_verification` | `stage`, `transaction_id`, `user_id`, `device_id`; optional `emojis`, `expires_at` |
+| `matrix_e2ee_message_received` | `sender`, `room_id`; optional `event_id` |
+| `matrix_e2ee_verification_done` | `peer_user_id`, `peer_device_id`, `timestamp` |
 | `matrix_e2ee_fingerprint` | `user_id`, `device_id`, `ed25519`, `curve25519` — public keys only |
 
 SAS emoji comparison is available in the Options Flow wizard or, for advanced use, through the `matrix_e2ee_verification` event (`stage: sas`) in Developer Tools. Confirming is the only step that marks a device verified. Accepting an inbound SAS start is protocol continuation, not trust.
 
-Commands fire Home Assistant events only. This integration never calls `domain.service` itself. Map commands in automations.
+Commands fire `matrix_e2ee_command` with `room_id`, `sender`, `command`, and `args` (plus `event_id` / `thread_parent` when Matrix provides them). Accepted inbound text also fires `matrix_e2ee_message_received`; message bodies are never exposed. This integration never calls `domain.service` itself. Map commands in automations.
 
 `notify.matrix_e2ee` is deferred. There is no `matrix_e2ee_message` event.
 
@@ -260,6 +262,13 @@ The integration exposes a diagnostic connectivity entity:
 - **Category**: diagnostic
 - **On**: bot is connected and not soft-logged-out
 - **Attributes** (no secrets): `soft_logged_out`, `device_id`, `known_device_count`, `verified_peer_count`, `verified_peers` (up to 10 `{user_id, device_id}` pairs; peer devices only, never the bot itself)
+
+### Bot activity event
+
+`event.*_bot_activity` records the latest accepted activity with event types
+`message`, `command`, and `verification_done`. It shares the bot device with
+the Connection entity and is push-driven; it exposes no message body or key
+material.
 
 ### Config Entry diagnostics
 

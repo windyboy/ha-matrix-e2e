@@ -95,5 +95,12 @@
       "verification_timeout": "Device verification timed out.",
       "verification_complete": "Device verification complete."
     }
+  },
+  "entity": {
+    "event": {
+      "bot_activity": {
+        "name": "Bot activity"
+      }
+    }
   }
 }

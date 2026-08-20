@@ -36,6 +36,7 @@ Tests do not connect to a real Matrix homeserver. They inject a simulated `nio.A
 | Config Entry lifecycle | `tests/test_entry_lifecycle.py`, `tests/test_manifest.py` |
 | Diagnostics, URL, brand, connection sensor | `tests/test_diagnostics.py`, `tests/test_url.py`, `tests/test_brand.py`, `tests/test_binary_sensor.py` |
 | matrix-nio compatibility | `tests/test_nio_compat.py` |
+| HA event entity and activity events | `tests/test_event.py` |
 | Shared fixtures / doubles | `tests/conftest.py`, `tests/fakes.py` |
 
 Run the complete suite:
@@ -45,6 +46,15 @@ uv run python -m pytest
 ```
 
 `FakeNio` cannot expose protocol-encoding differences between real clients. Changes to SAS, commitments, emoji, or MAC handling also require a manual end-to-end check with Element on a real homeserver; [SAS architecture](SAS_ARCHITECTURE.md) records this test boundary.
+
+## Client structure
+
+`MatrixE2EEClient` remains the compatible facade for setup, config flows, and
+services. Its lifecycle is represented by `ClientState`; pure allowlist and
+command parsing rules live in `helpers.py`; and entity updates cross the small
+listener seam (`add_state_listener` / `add_activity_listener`). This keeps the
+Matrix protocol implementation independent from Home Assistant entities while
+allowing the platforms to be push-driven.
 
 ## CI quality checks
 

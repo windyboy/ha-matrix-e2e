@@ -37,7 +37,7 @@ If the wizard is unavailable, you can complete the same flow through Home Assist
 3. When `stage: sas` arrives, compare the event's `emojis` with Element.
 4. If they match, call `matrix_e2ee.confirm_verification` with the event's `transaction_id`.
 5. If they differ, call `matrix_e2ee.cancel_verification` with the same event's `transaction_id`.
-6. A `stage: done` event means verification completed.
+6. A `stage: done` event and `matrix_e2ee_verification_done` mean verification completed. The latter contains only the peer user/device IDs and timestamp, never cryptographic material.
 
 If you already received `stage: canceled` or `stage: timeout`, that `transaction_id` is no longer valid. Start a new verification from Element instead of confirming the old transaction.
 
