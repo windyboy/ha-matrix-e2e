@@ -36,6 +36,7 @@ uv run python -m pytest
 | Config Entry 生命周期 | `tests/test_entry_lifecycle.py`、`tests/test_manifest.py` |
 | 诊断、URL、品牌、连接传感器 | `tests/test_diagnostics.py`、`tests/test_url.py`、`tests/test_brand.py`、`tests/test_binary_sensor.py` |
 | matrix-nio 兼容层 | `tests/test_nio_compat.py` |
+| HA 事件实体与活动事件 | `tests/test_event.py` |
 | 共用测试夹具 / 替身 | `tests/conftest.py`、`tests/fakes.py` |
 
 运行完整测试：
@@ -45,6 +46,10 @@ uv run python -m pytest
 ```
 
 `FakeNio` 无法发现真实客户端之间的协议编码差异。修改 SAS、承诺值、emoji 或 MAC 时，还需要在真实 homeserver 上使用 Element 手动完成端到端验证；[SAS 架构说明](SAS_ARCHITECTURE.zh.md)记录了这一测试边界。
+
+## 客户端结构
+
+`MatrixE2EEClient` 仍是供 setup、配置流程与服务使用的兼容门面。其生命周期由 `ClientState` 表示；纯粹的允许列表与命令解析规则位于 `helpers.py`；实体更新通过小型监听接口（`add_state_listener` / `add_activity_listener`）连接。这样 Matrix 协议实现不依赖 Home Assistant 实体，同时平台仍可由事件主动更新。
 
 ## CI 质量检查
 

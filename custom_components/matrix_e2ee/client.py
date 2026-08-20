@@ -10,8 +10,9 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
+from .client_state import ClientState
 from .const import (
     DEVICE_NAME,
     ERROR_DEVICE_MISMATCH,
@@ -34,7 +35,9 @@ from .const import (
     ERROR_VERIFICATION_TIMEOUT,
     EVENT_COMMAND,
     EVENT_ERROR,
+    EVENT_MESSAGE_RECEIVED,
     EVENT_VERIFICATION,
+    EVENT_VERIFICATION_DONE,
     NIO_DEFAULT_PICKLE_KEY,
     SAS_METHOD_V1,
     VERIFICATION_DONE,
@@ -44,6 +47,7 @@ from .const import (
     VERIFICATION_REQUEST_MAX_FUTURE_MS,
     VERIFICATION_TIMEOUT_SECONDS,
 )
+from .helpers import parse_command, requires_verified_sender, room_allowed, user_allowed
 from .nio_compat import apply_nio_compat_patches
 from .storage import (
     MatrixSession,
@@ -61,10 +65,6 @@ NioClientFactory = Callable[..., Any]
 # Maximum number of verified peers surfaced in diagnostic attributes. Counts are
 # never capped; only the human-readable peer list is truncated.
 MAX_VERIFIED_PEERS = 10
-
-_ENCRYPTED_EVENT_TYPES = frozenset(
-    {"m.room.encrypted", "MegolmEvent", "OlmEvent", "EncryptedEvent"}
-)
 
 
 class SecretRedactFilter(logging.Filter):
@@ -166,27 +166,6 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
-def room_allowed(room_id: str, allowed_rooms: list[str]) -> bool:
-    """Empty allowlist forbids every room."""
-    return bool(allowed_rooms) and room_id in allowed_rooms
-
-
-def user_allowed(user_id: str, allowed_users: list[str]) -> bool:
-    """Empty allowlist forbids every command sender."""
-    return bool(allowed_users) and user_id in allowed_users
-
-
-def parse_command(body: str, prefix: str) -> tuple[str, list[str]] | None:
-    """Return (command, args) if body starts with prefix; never return the raw body."""
-    if not prefix or not body.startswith(prefix):
-        return None
-    rest = body[len(prefix) :].strip()
-    if not rest:
-        return None
-    parts = rest.split()
-    return parts[0], parts[1:]
-
-
 def _nio_room(nio: Any, room_id: str) -> Any | None:
     rooms = getattr(nio, "rooms", None)
     if not isinstance(rooms, dict):
@@ -204,18 +183,6 @@ def _sync_since(nio: Any) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
-
-
-def _requires_verified_sender(room: Any, event: Any) -> bool:
-    """Encrypted rooms and decrypted/ciphertext events require verified=True."""
-    if getattr(room, "encrypted", False):
-        return True
-    if getattr(event, "decrypted", False):
-        return True
-    event_type = getattr(event, "type", None)
-    if event_type in _ENCRYPTED_EVENT_TYPES:
-        return True
-    return type(event).__name__ in _ENCRYPTED_EVENT_TYPES
 
 
 class MatrixE2EEClient:
@@ -254,7 +221,56 @@ class MatrixE2EEClient:
         self._sas_started_at: dict[str, float] = {}
         self._verification_timeout = VERIFICATION_TIMEOUT_SECONDS
         self._monotonic = time.monotonic
-        self._soft_logged_out = False
+        self._state = ClientState.STOPPED
+        self._state_listeners: set[Callable[[], None]] = set()
+        self._activity_listeners: set[Callable[[str], None]] = set()
+
+    @property
+    def state(self) -> ClientState:
+        """Return the client lifecycle state."""
+        return self._state
+
+    @property
+    def _soft_logged_out(self) -> bool:
+        """Compatibility view of the lifecycle state for existing callers."""
+        return self._state is ClientState.SOFT_LOGGED_OUT
+
+    @_soft_logged_out.setter
+    def _soft_logged_out(self, value: bool) -> None:
+        self._set_state(ClientState.SOFT_LOGGED_OUT if value else ClientState.RUNNING)
+
+    def add_state_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Subscribe to connection/verification state changes.
+
+        The returned callable removes the listener, keeping Home Assistant
+        platform objects out of the protocol client's interface.
+        """
+        self._state_listeners.add(listener)
+        return lambda: self._state_listeners.discard(listener)
+
+    def add_activity_listener(
+        self, listener: Callable[[str], None]
+    ) -> Callable[[], None]:
+        """Subscribe to accepted inbound activity without exposing event data."""
+        self._activity_listeners.add(listener)
+        return lambda: self._activity_listeners.discard(listener)
+
+    def _set_state(self, state: ClientState) -> None:
+        if self._state is state:
+            return
+        self._state = state
+        self._notify(self._state_listeners)
+
+    @staticmethod
+    def _notify(listeners: set[Callable[..., None]], *args: Any) -> None:
+        for listener in tuple(listeners):
+            try:
+                listener(*args)
+            except Exception:
+                _LOGGER.exception("matrix_e2ee state listener failed")
+
+    def _record_activity(self, activity_type: str) -> None:
+        self._notify(self._activity_listeners, activity_type)
 
     async def _make_nio(
         self,
@@ -311,6 +327,7 @@ class MatrixE2EEClient:
         if not self._soft_logged_out:
             await self._query_own_device_keys()
             self.enable_verification_callbacks()
+            self._set_state(ClientState.RUNNING)
 
     async def _first_login(self) -> None:
         if not self._password:
@@ -461,6 +478,7 @@ class MatrixE2EEClient:
             except Exception:  # noqa: BLE001 — shutdown must not raise
                 pass
         await self._close_nio()
+        self._set_state(ClientState.STOPPED)
 
     async def _close_nio(self) -> None:
         nio = self.nio
@@ -483,10 +501,14 @@ class MatrixE2EEClient:
         _LOGGER.warning("matrix_e2ee error %s", payload)
         self._fire_event(EVENT_ERROR, payload)
 
+    def _fail(self, code: str, message: str, **extra: Any) -> NoReturn:
+        """Emit a public error event and fail closed with the same code."""
+        self._emit_error(code, **extra)
+        raise MatrixE2EEError(code, message)
+
     def _reject_if_soft_logged_out(self) -> None:
         if self._soft_logged_out:
-            self._emit_error(ERROR_SOFT_LOGOUT)
-            raise MatrixE2EEError(
+            self._fail(
                 ERROR_SOFT_LOGOUT,
                 "session is soft-logged-out; call matrix_e2ee.reauthenticate",
             )
@@ -635,8 +657,9 @@ class MatrixE2EEClient:
     async def async_send_message(self, room_id: str, message: str) -> None:
         """Send text to an allowlisted room. Never falls back to plaintext."""
         if not room_allowed(room_id, self.allowed_rooms):
-            self._emit_error(ERROR_ROOM_NOT_ALLOWED, room_id=room_id)
-            raise MatrixE2EEError(ERROR_ROOM_NOT_ALLOWED, "room is not allowlisted")
+            self._fail(
+                ERROR_ROOM_NOT_ALLOWED, "room is not allowlisted", room_id=room_id
+            )
         self._reject_if_soft_logged_out()
         nio = self._require_nio()
         room = _nio_room(nio, room_id)
@@ -677,7 +700,7 @@ class MatrixE2EEClient:
             return
         if self.session and sender == self.session.user_id:
             return
-        requires_verified = _requires_verified_sender(room, event)
+        requires_verified = requires_verified_sender(room, event)
         verified = bool(getattr(event, "verified", False))
         decrypted = bool(getattr(event, "decrypted", False))
         body = getattr(event, "body", None)
@@ -695,19 +718,22 @@ class MatrixE2EEClient:
             return
         if not user_allowed(sender, self.allowed_users):
             return
+        event_data = {"sender": sender, "room_id": room_id}
+        event_id = getattr(event, "event_id", None)
+        if isinstance(event_id, str) and event_id:
+            event_data["event_id"] = event_id
+        self._fire_event(EVENT_MESSAGE_RECEIVED, event_data)
+        self._record_activity("message")
         parsed = parse_command(body, self.command_prefix)
         if parsed is None:
             return
         command, args = parsed
-        self._fire_event(
-            EVENT_COMMAND,
-            {
-                "room_id": room_id,
-                "sender": sender,
-                "command": command,
-                "args": args,
-            },
-        )
+        command_data = {**event_data, "command": command, "args": args}
+        thread_parent = getattr(event, "thread_parent", None)
+        if isinstance(thread_parent, str) and thread_parent:
+            command_data["thread_parent"] = thread_parent
+        self._fire_event(EVENT_COMMAND, command_data)
+        self._record_activity("command")
 
     def enable_command_callbacks(self) -> None:
         """Register inbound handlers. Must not run before the first historical sync."""
@@ -755,6 +781,15 @@ class MatrixE2EEClient:
         )
         _LOGGER.info("matrix_e2ee verification %s", payload)
         self._fire_event(EVENT_VERIFICATION, payload)
+        if stage == "done":
+            completed = {
+                "peer_user_id": payload.get("user_id"),
+                "peer_device_id": payload.get("device_id"),
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+            self._fire_event(EVENT_VERIFICATION_DONE, completed)
+            self._record_activity("verification_done")
+            self._notify(self._state_listeners)
 
     def _verification_expires_at(self) -> str:
         """ISO UTC timestamp when the current SAS offer expires."""

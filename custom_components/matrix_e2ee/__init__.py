@@ -57,7 +57,11 @@ try:
     from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
     from homeassistant.const import EVENT_HOMEASSISTANT_STOP
     from homeassistant.core import HomeAssistant
-    from homeassistant.exceptions import ConfigEntryAuthFailed
+    from homeassistant.exceptions import (
+        ConfigEntryAuthFailed,
+        HomeAssistantError,
+        ServiceValidationError,
+    )
     from homeassistant.helpers import config_validation as cv
     from homeassistant.helpers.service import async_register_admin_service
 
@@ -152,6 +156,23 @@ else:
     def _register_services(hass: HomeAssistant, client: MatrixE2EEClient) -> None:
         """Register all matrix_e2ee services bound to a client instance."""
 
+        def _raise_service_error(err: MatrixE2EEError) -> None:
+            """Keep the legacy event while making service failures visible to HA."""
+            validation_codes = {
+                "room_not_allowed",
+                "device_missing",
+                "fingerprint_mismatch",
+                "invalid_transaction",
+                "invalid_state",
+                "password_required",
+            }
+            error_type = (
+                ServiceValidationError
+                if err.code in validation_codes
+                else HomeAssistantError
+            )
+            raise error_type(f"matrix_e2ee: {err.code}") from err
+
         async def _handle_send(call) -> None:
             try:
                 await client.async_send_message(
@@ -160,6 +181,7 @@ else:
             except MatrixE2EEError as err:
                 _LOGGER.error("matrix_e2ee send failed: %s", err.code)
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
+                _raise_service_error(err)
 
         hass.services.async_register(
             DOMAIN, SERVICE_SEND_MESSAGE, _handle_send, schema=SEND_MESSAGE_SCHEMA
@@ -173,6 +195,7 @@ else:
             except MatrixE2EEError as err:
                 _LOGGER.error("matrix_e2ee start_verification failed: %s", err.code)
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
+                _raise_service_error(err)
 
         async_register_admin_service(
             hass,
@@ -188,6 +211,7 @@ else:
             except MatrixE2EEError as err:
                 _LOGGER.error("matrix_e2ee confirm_verification failed: %s", err.code)
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
+                _raise_service_error(err)
 
         async_register_admin_service(
             hass,
@@ -203,6 +227,7 @@ else:
             except MatrixE2EEError as err:
                 _LOGGER.error("matrix_e2ee cancel_verification failed: %s", err.code)
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
+                _raise_service_error(err)
 
         async_register_admin_service(
             hass,
@@ -231,6 +256,7 @@ else:
                     "matrix_e2ee verify_device_by_fingerprint failed: %s", err.code
                 )
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
+                _raise_service_error(err)
 
         async_register_admin_service(
             hass,
@@ -246,7 +272,7 @@ else:
             except MatrixE2EEError as err:
                 _LOGGER.error("matrix_e2ee reauthenticate failed: %s", err.code)
                 _fire_event(hass, EVENT_ERROR, {"code": err.code})
-                return
+                _raise_service_error(err)
             task = client._sync_task
             if task is None or getattr(task, "done", lambda: True)():
                 # Background task — does not block bootstrap or shutdown.
@@ -331,12 +357,16 @@ else:
         entry.async_on_unload(
             hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
         )
-        await hass.config_entries.async_forward_entry_setups(entry, ["binary_sensor"])
+        await hass.config_entries.async_forward_entry_setups(
+            entry, ["binary_sensor", "event"]
+        )
         return True
 
     async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Unload a config entry."""
-        await hass.config_entries.async_unload_platforms(entry, ["binary_sensor"])
+        await hass.config_entries.async_unload_platforms(
+            entry, ["binary_sensor", "event"]
+        )
         client = hass.data.setdefault(DOMAIN, {}).pop(entry.entry_id, None)
         if client is not None:
             await client.async_stop()

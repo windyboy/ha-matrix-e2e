@@ -37,7 +37,7 @@
 3. 收到 `stage: sas` 后，将事件中的 `emojis` 与 Element 显示的 emoji 逐项比较。
 4. 一致时调用 `matrix_e2ee.confirm_verification`，并填写事件中的 `transaction_id`。
 5. 不一致时调用 `matrix_e2ee.cancel_verification`，并填写同一事件中的 `transaction_id`。
-6. 收到 `stage: done` 表示验证完成。
+6. 收到 `stage: done` 或 `matrix_e2ee_verification_done` 表示验证完成；后者仅包含对端用户/设备 ID 与时间戳，不含任何密钥材料。
 
 如果已经收到 `stage: canceled` 或 `stage: timeout`，该 `transaction_id` 已失效。请从 Element 重新发起，不要继续确认旧事务。
 

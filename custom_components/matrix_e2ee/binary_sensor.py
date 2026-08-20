@@ -7,6 +7,7 @@ secrets are ever exposed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -39,11 +40,12 @@ class MatrixE2EEConnectivitySensor(BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_has_entity_name = True
     _attr_name = "Connection"
-    _attr_should_poll = True
+    _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, client: MatrixE2EEClient, entry: ConfigEntry) -> None:
         self._client = client
+        self._remove_listener: Callable[[], None] | None = None
         self._attr_unique_id = f"{entry.entry_id}_connection"
         user_id = (
             client.session.user_id if client.session is not None else entry.unique_id
@@ -54,6 +56,20 @@ class MatrixE2EEConnectivitySensor(BinarySensorEntity):
             manufacturer="matrix-nio",
             model="matrix_e2ee",
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to client state changes after the entity is registered."""
+        await super().async_added_to_hass()
+        self._remove_listener = self._client.add_state_listener(
+            self.async_write_ha_state
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Remove the listener with the platform entity."""
+        if self._remove_listener is not None:
+            self._remove_listener()
+            self._remove_listener = None
+        await super().async_will_remove_from_hass()
 
     @property
     def is_on(self) -> bool:
